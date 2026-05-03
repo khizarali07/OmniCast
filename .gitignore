@@ -1,0 +1,32 @@
+# --- Root ---
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+.env
+
+# --- Backend (.venv, models, storage) ---
+omnicast-backend/.venv/
+omnicast-backend/__pycache__/
+omnicast-backend/models/
+omnicast-backend/storage/
+omnicast-backend/.pytest_cache/
+omnicast-backend/*.wav
+omnicast-backend/*.mp3
+omnicast-backend/*.webm
+
+# --- Frontend (node_modules, build) ---
+vocalize-frontend/node_modules/
+vocalize-frontend/.next/
+vocalize-frontend/out/
+vocalize-frontend/build/
+vocalize-frontend/.env.local
+vocalize-frontend/.env.development.local
+vocalize-frontend/.env.test.local
+vocalize-frontend/.env.production.local
+
+# --- OS / IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo

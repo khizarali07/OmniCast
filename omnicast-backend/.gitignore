@@ -1,0 +1,25 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+env/
+venv/
+ENV/
+
+# Model Weights (Large files)
+models/*
+!models/.gitkeep
+
+# Project specific
+.env
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
