@@ -271,6 +271,20 @@ export default function CloneVoicePage() {
                     <p className="font-body-sm text-body-sm text-on-surface-variant mt-xs">Provide at least 30-60 seconds of natural speech for cloning.</p>
                   </div>
                 </li>
+                <li className="flex items-start gap-md pt-4 border-t border-white/5">
+                  <span className="material-symbols-outlined text-purple-400 text-[20px] shrink-0 mt-0.5">translate</span>
+                  <div>
+                    <h4 className="font-body-sm font-semibold text-on-surface">Cross-Lingual Cloning</h4>
+                    <p className="font-body-sm text-body-sm text-on-surface-variant mt-xs">Upload Urdu audio and type English text—OmniCast will clone your voice to speak the new language.</p>
+                  </div>
+                </li>
+                <li className="flex items-start gap-md pt-4 border-t border-white/5">
+                  <span className="material-symbols-outlined text-blue-400 text-[20px] shrink-0 mt-0.5">sentiment_satisfied</span>
+                  <div>
+                    <h4 className="font-body-sm font-semibold text-on-surface">Non-Verbal Emotions</h4>
+                    <p className="font-body-sm text-body-sm text-on-surface-variant mt-xs">Type <code className="text-blue-300">[laughter]</code>, <code className="text-blue-300">[sighing]</code>, or <code className="text-blue-300">[clearing throat]</code> for human-like realism.</p>
+                  </div>
+                </li>
               </ul>
             </div>
           </div>

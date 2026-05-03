@@ -22,7 +22,7 @@ export default function Sidebar() {
           <img alt="User Profile Avatar" className="w-full h-full object-cover rounded-full mix-blend-luminosity opacity-80" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDiQ6GjeFI8wDQtp3kBk6uX0KG56rNnElqpqpumDgTf4ncMbh9K476kwgERJt1A1CpEKlniSn0LYI6v2bvINb8QzztkYyrxeIwnuhymF4g4g54Svz0N5JG5Qnqv6CPYqOk4E09Md8MF0I6lZgQATrNKD2h5DQ6sQ_jj45Zv4RA032NoY4EWImPFxdqLeOwxTxutLLnp3xq1g10NjGLjUkSRcFFwlSja_KwUcD3mbF4-46Lnc6Y-tFmI0kXARgq99gcn1XkT0mfDva69"/>
         </div>
         <div>
-          <h1 className="text-2xl font-black tracking-tight text-white font-h2">Sonic AI</h1>
+          <h1 className="text-2xl font-black tracking-tight text-white font-h2">OmniCast</h1>
           <p className="text-xs text-slate-400 font-label-caps">Professional Plan</p>
         </div>
       </div>

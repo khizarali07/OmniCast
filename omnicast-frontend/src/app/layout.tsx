@@ -6,7 +6,7 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: "Sonic AI",
+  title: "OmniCast",
   description: "Create a unique AI persona by shaping demographic traits and vocal characteristics.",
 };
 

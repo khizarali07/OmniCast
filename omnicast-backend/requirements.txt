@@ -3,9 +3,9 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.6
 
 # AI/ML
-torch>=2.9.0
-torchaudio>=2.9.0
-# omnivoice  # Uncomment when package is available on PyPI
+# torch>=2.9.0
+# torchaudio>=2.9.0
+omnivoice==0.1.5
 
 # API & Data
 python-multipart==0.0.12

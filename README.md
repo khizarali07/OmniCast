@@ -18,7 +18,7 @@ OmniCast is a powerful, professional-grade AI Voice ecosystem designed for low-l
 
 ## 📦 Monorepo Structure
 - `/omnicast-backend`: The AI inference engine and library manager.
-- `/vocalize-frontend`: The sleek, glassmorphic user dashboard.
+- `/omnicast-frontend`: The sleek, glassmorphic user dashboard.
 
 ---
 Developed with ❤️ by Khizar Ali.

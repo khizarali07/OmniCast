@@ -11,7 +11,7 @@ export function getVerificationEmailHtml(otpCode: string, verifyUrl: string) {
       <div style="max-width: 600px; margin: 40px auto; background-color: #1e293b; border-radius: 24px; overflow: hidden; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.1);">
         <!-- Header -->
         <div style="background: linear-gradient(135deg, #9d50bb 0%, #6e48aa 100%); padding: 50px 20px; text-align: center;">
-          <div style="font-size: 36px; font-weight: 800; color: white; letter-spacing: -0.04em; text-shadow: 0 2px 10px rgba(0,0,0,0.2);">Sonic AI</div>
+          <div style="font-size: 36px; font-weight: 800; color: white; letter-spacing: -0.04em; text-shadow: 0 2px 10px rgba(0,0,0,0.2);">OmniCast</div>
           <div style="color: rgba(255,255,255,0.8); font-size: 14px; margin-top: 8px; font-weight: 500; text-transform: uppercase; letter-spacing: 2px;">Professional Voice Suite</div>
         </div>
         

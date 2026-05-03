@@ -21,7 +21,7 @@ export default function SignupPage() {
             <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-container/30 to-secondary-container/10 flex items-center justify-center mb-5 border border-primary-container/20 shadow-[0_0_16px_rgba(157,80,187,0.2)] group-hover:scale-105 transition-transform">
               <span className="material-symbols-outlined text-primary" style={{fontVariationSettings: "'FILL' 1"}}>graphic_eq</span>
             </div>
-            <h1 className="font-h2 text-h2 text-on-surface mb-2">Sonic AI</h1>
+            <h1 className="font-h2 text-h2 text-on-surface mb-2">OmniCast</h1>
             <p className="font-body-sm text-body-sm text-on-surface-variant">Create an account to start cloning.</p>
           </Link>
 

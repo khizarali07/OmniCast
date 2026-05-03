@@ -13,6 +13,7 @@ export default function DesignVoicePage() {
   const [isSaving, setIsSaving] = useState(false);
   const [gender, setGender] = useState('female');
   const [age, setAge] = useState('young');
+  const [style, setStyle] = useState('natural');
 
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,7 +27,8 @@ export default function DesignVoicePage() {
       const blob = await generateSpeech({
         text,
         speed,
-        voice_id: 'default', // Using a default ID for now as per backend stub
+        voice_id: 'default', 
+        metadata: { gender, age, style }
       });
       
       const url = blobToAudioUrl(blob);
@@ -131,6 +133,26 @@ export default function DesignVoicePage() {
             </div>
           </div>
 
+          {/* Style (New: Acoustic Prompting) */}
+          <div className="col-span-1 md:col-span-2 space-y-3">
+            <label className="block font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider" htmlFor="style">Vocal Style (Acoustic Prompting)</label>
+            <div className="relative">
+              <select 
+                className="w-full bg-[#070A12] border border-outline-variant rounded-lg py-3.5 px-4 text-white font-body-md appearance-none focus:outline-none focus:border-primary-container focus:ring-1 focus:ring-primary-container transition-all cursor-pointer" 
+                id="style" 
+                value={style}
+                onChange={(e) => setStyle(e.target.value)}
+              >
+                <option value="natural">Natural / Balanced</option>
+                <option value="whisper">Whisper</option>
+                <option value="shouting">Shouting / Energetic</option>
+                <option value="cheerful">Cheerful / Upbeat</option>
+                <option value="sad">Sad / Melancholic</option>
+                <option value="angry">Angry / Sharp</option>
+              </select>
+            </div>
+          </div>
+
           {/* Speed Slider (Updated from Pitch to match Backend) */}
           <div className="col-span-1 md:col-span-2 space-y-6 pt-4 border-t border-surface-variant/50">
             <div className="flex justify-between items-end">
@@ -215,6 +237,25 @@ export default function DesignVoicePage() {
             </button>
           </div>
         </form>
+      </div>
+
+      {/* Info Cards */}
+      <div className="mt-12 grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-[#121826]/40 border border-white/5 rounded-xl p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <span className="material-symbols-outlined text-blue-400">sentiment_satisfied</span>
+            <h4 className="text-white font-semibold">Non-Verbal Emotions</h4>
+          </div>
+          <p className="text-sm text-slate-400">Add realism by typing tags directly into your text. Try: <code className="text-blue-300">[laughter]</code>, <code className="text-blue-300">[sighing]</code>, or <code className="text-blue-300">[clearing throat]</code>.</p>
+        </div>
+
+        <div className="bg-[#121826]/40 border border-white/5 rounded-xl p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <span className="material-symbols-outlined text-purple-400">record_voice_over</span>
+            <h4 className="text-white font-semibold">Style Control</h4>
+          </div>
+          <p className="text-sm text-slate-400">Use the <b>Vocal Style</b> dropdown to control the overall mood, or describe the style directly in the text prompt for fine-grained control.</p>
+        </div>
       </div>
     </main>
   );

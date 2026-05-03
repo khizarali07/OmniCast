@@ -68,6 +68,7 @@ export async function generateSpeech(params: {
   text: string;
   voice_id?: string;
   speed?: number;
+  metadata?: any;
 }): Promise<Blob> {
   const res = await apiFetch("/api/v1/tts/generate", {
     method: "POST",
@@ -76,6 +77,7 @@ export async function generateSpeech(params: {
       text: params.text,
       voice_id: params.voice_id ?? null,
       speed: params.speed ?? 1.0,
+      metadata: params.metadata ?? null,
     }),
   });
   return res.blob();
