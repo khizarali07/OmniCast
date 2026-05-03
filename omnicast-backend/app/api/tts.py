@@ -26,6 +26,7 @@ class GenerateRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000, description="Text to synthesize")
     voice_id: str | None = Field(None, description="Optional preset voice ID")
     speed: float = Field(1.0, ge=0.5, le=2.0, description="Speech speed multiplier")
+    metadata: dict | None = Field(None, description="Optional voice design metadata (gender, age, style)")
 
 
 # ── endpoint ──────────────────────────────────────────────────────────────────
@@ -52,29 +53,55 @@ async def generate(
     model = get_model()
 
     try:
-        # Prepend voice design attributes to the text if provided
-        # OmniVoice uses [attribute:value] tags for design
-        prompt_prefix = ""
-        # For now we'll use a default reference if we had one, but let's try pure text-to-speech
-        # If OmniVoice requires a ref_audio, we'll need to provide a default sample.
-        # However, it supports 'voice design' via text prompts.
+        # ── Step 1: Voice Design Mapping (OmniVoice 2604.00688 Protocol) ──────
+        # Global attributes go into the 'instruct' parameter as comma-separated keywords.
+        instruct_items = []
         
-        # Example: "Hello" -> "[gender:male][age:young] Hello"
-        # Since our schema doesn't have these yet, we'll stick to basic text for now
-        # but the model will use its default base voice.
-        
+        if body.metadata:
+            # 1. Gender Mapping
+            gender = body.metadata.get("gender")
+            if gender == "female": instruct_items.append("female")
+            elif gender == "male": instruct_items.append("male")
+            
+            # 2. Age Mapping
+            age = body.metadata.get("age")
+            if age: instruct_items.append(age) # Matches child, teenager, young adult, etc.
+            
+            # 3. Pitch Mapping (New)
+            pitch = body.metadata.get("pitch")
+            if pitch: instruct_items.append(pitch)
+            
+            # 4. Accent Mapping (New)
+            accent = body.metadata.get("accent")
+            if accent: instruct_items.append(accent)
+            
+            # 5. Vocal Style (Hints for 'instruct')
+            style = body.metadata.get("style")
+            if style == "whisper": instruct_items.append("whisper")
+            elif style == "energetic": instruct_items.append("high pitch, fast")
+            elif style == "soft":      instruct_items.append("low pitch, slow")
+
+        # 6. Speed (from slider)
+        if body.speed < 0.8: instruct_items.append("very slow")
+        elif body.speed < 0.95: instruct_items.append("slow")
+        elif body.speed > 1.2: instruct_items.append("fast")
+        elif body.speed > 1.5: instruct_items.append("very fast")
+
+        instruct_str = ", ".join(instruct_items)
+        logger.info(f"[TTS] Instruct: '{instruct_str}' | Text: '{body.text[:50]}...'")
+
+        # ── Step 2: Inference ────────────────────────────────────────────────
         audio_list = model.generate(
             text=body.text,
-            # If no ref_audio is provided, it uses the default designed voice characteristics
-            # speed=body.speed # Some versions use 'speed' in generate, some don't
+            instruct=instruct_str if instruct_str else None,
         )
         
         if not audio_list:
             raise ValueError("Model returned empty audio list")
             
-        # Convert numpy array (T,) to torch tensor (1, T) for our engine
+        # Convert numpy array (T,) to torch tensor (1, T)
         waveform = torch.from_numpy(audio_list[0]).unsqueeze(0)
-        sample_rate = 24000  # OmniVoice native rate
+        sample_rate = 24000
         
         logger.info(f"[TTS] Generated {waveform.shape[-1]} samples.")
 

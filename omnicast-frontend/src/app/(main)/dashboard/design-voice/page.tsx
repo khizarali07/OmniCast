@@ -12,7 +12,9 @@ export default function DesignVoicePage() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [gender, setGender] = useState('female');
-  const [age, setAge] = useState('young');
+  const [age, setAge] = useState('young adult');
+  const [pitch, setPitch] = useState('moderate pitch');
+  const [accent, setAccent] = useState('american accent');
   const [style, setStyle] = useState('natural');
 
   const handleGenerate = async (e: React.FormEvent) => {
@@ -28,7 +30,7 @@ export default function DesignVoicePage() {
         text,
         speed,
         voice_id: 'default', 
-        metadata: { gender, age, style }
+        metadata: { gender, age, pitch, accent, style }
       });
       
       const url = blobToAudioUrl(blob);
@@ -52,7 +54,7 @@ export default function DesignVoicePage() {
       await saveVoice({
         name: voiceName,
         voice_type: 'designed',
-        metadata: { text, speed }
+        metadata: { text, speed, gender, age, pitch, accent, style }
       });
       toast.success(`Voice "${voiceName}" saved to your library!`);
     } catch (error: any) {
@@ -111,7 +113,6 @@ export default function DesignVoicePage() {
               >
                 <option value="female">Female</option>
                 <option value="male">Male</option>
-                <option value="androgynous">Androgynous</option>
               </select>
             </div>
           </div>
@@ -126,16 +127,61 @@ export default function DesignVoicePage() {
                 value={age}
                 onChange={(e) => setAge(e.target.value)}
               >
-                <option value="young">Young Adult (18-30)</option>
-                <option value="middle">Middle Aged (30-50)</option>
-                <option value="senior">Senior (50+)</option>
+                <option value="child">Child</option>
+                <option value="teenager">Teenager</option>
+                <option value="young adult">Young Adult</option>
+                <option value="middle-aged">Middle Aged</option>
+                <option value="elderly">Elderly</option>
               </select>
             </div>
           </div>
 
-          {/* Style (New: Acoustic Prompting) */}
+          {/* Pitch */}
+          <div className="col-span-1 space-y-3">
+            <label className="block font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider" htmlFor="pitch">Vocal Pitch</label>
+            <div className="relative">
+              <select 
+                className="w-full bg-[#070A12] border border-outline-variant rounded-lg py-3.5 px-4 text-white font-body-md appearance-none focus:outline-none focus:border-primary-container focus:ring-1 focus:ring-primary-container transition-all cursor-pointer" 
+                id="pitch" 
+                value={pitch}
+                onChange={(e) => setPitch(e.target.value)}
+              >
+                <option value="very low pitch">Very Low Pitch</option>
+                <option value="low pitch">Low Pitch</option>
+                <option value="moderate pitch">Moderate Pitch</option>
+                <option value="high pitch">High Pitch</option>
+                <option value="very high pitch">Very High Pitch</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Accent */}
+          <div className="col-span-1 space-y-3">
+            <label className="block font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider" htmlFor="accent">Accent (English only)</label>
+            <div className="relative">
+              <select 
+                className="w-full bg-[#070A12] border border-outline-variant rounded-lg py-3.5 px-4 text-white font-body-md appearance-none focus:outline-none focus:border-primary-container focus:ring-1 focus:ring-primary-container transition-all cursor-pointer" 
+                id="accent" 
+                value={accent}
+                onChange={(e) => setAccent(e.target.value)}
+              >
+                <option value="american accent">American</option>
+                <option value="british accent">British</option>
+                <option value="australian accent">Australian</option>
+                <option value="canadian accent">Canadian</option>
+                <option value="indian accent">Indian</option>
+                <option value="chinese accent">Chinese</option>
+                <option value="korean accent">Korean</option>
+                <option value="japanese accent">Japanese</option>
+                <option value="portuguese accent">Portuguese</option>
+                <option value="russian accent">Russian</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Style */}
           <div className="col-span-1 md:col-span-2 space-y-3">
-            <label className="block font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider" htmlFor="style">Vocal Style (Acoustic Prompting)</label>
+            <label className="block font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider" htmlFor="style">Acoustic Style Hint</label>
             <div className="relative">
               <select 
                 className="w-full bg-[#070A12] border border-outline-variant rounded-lg py-3.5 px-4 text-white font-body-md appearance-none focus:outline-none focus:border-primary-container focus:ring-1 focus:ring-primary-container transition-all cursor-pointer" 
@@ -145,15 +191,13 @@ export default function DesignVoicePage() {
               >
                 <option value="natural">Natural / Balanced</option>
                 <option value="whisper">Whisper</option>
-                <option value="shouting">Shouting / Energetic</option>
-                <option value="cheerful">Cheerful / Upbeat</option>
-                <option value="sad">Sad / Melancholic</option>
-                <option value="angry">Angry / Sharp</option>
+                <option value="energetic">Energetic / Sharp</option>
+                <option value="soft">Soft / Gentle</option>
               </select>
             </div>
           </div>
 
-          {/* Speed Slider (Updated from Pitch to match Backend) */}
+          {/* Speed Slider */}
           <div className="col-span-1 md:col-span-2 space-y-6 pt-4 border-t border-surface-variant/50">
             <div className="flex justify-between items-end">
               <label className="block font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider" htmlFor="speed">Synthesis Speed</label>
@@ -246,7 +290,7 @@ export default function DesignVoicePage() {
             <span className="material-symbols-outlined text-blue-400">sentiment_satisfied</span>
             <h4 className="text-white font-semibold">Non-Verbal Emotions</h4>
           </div>
-          <p className="text-sm text-slate-400">Add realism by typing tags directly into your text. Try: <code className="text-blue-300">[laughter]</code>, <code className="text-blue-300">[sighing]</code>, or <code className="text-blue-300">[clearing throat]</code>.</p>
+          <p className="text-sm text-slate-400">Add realism by typing tags directly into your text. Try: <code className="text-blue-300">[laughter]</code>, <code className="text-blue-300">[sigh]</code>, <code className="text-blue-300">[breath]</code>, <code className="text-blue-300">[cough]</code>, <code className="text-blue-300">[sniff]</code>, or <code className="text-blue-300">[whisper]</code>.</p>
         </div>
 
         <div className="bg-[#121826]/40 border border-white/5 rounded-xl p-6">
@@ -254,7 +298,7 @@ export default function DesignVoicePage() {
             <span className="material-symbols-outlined text-purple-400">record_voice_over</span>
             <h4 className="text-white font-semibold">Style Control</h4>
           </div>
-          <p className="text-sm text-slate-400">Use the <b>Vocal Style</b> dropdown to control the overall mood, or describe the style directly in the text prompt for fine-grained control.</p>
+          <p className="text-sm text-slate-400">Use the <b>Design</b> controls above to set global attributes. The model will automatically adjust its parameters based on these high-level instructions.</p>
         </div>
       </div>
     </main>

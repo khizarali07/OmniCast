@@ -34,21 +34,27 @@ _MAX_BYTES    = 10 * 1024 * 1024   # 10 MB
 async def clone_voice(
     text: str = Form(..., min_length=1, max_length=2000),
     speed: float = Form(1.0, ge=0.5, le=2.0),
+    metadata: str | None = Form(None, description="JSON string of style/age hints"),
     reference_audio: UploadFile = File(..., description="WAV / MP3 reference sample"),
     user: dict = Depends(get_current_user),
 ):
     logger.info(f"[CLONE] Request from user={user['email']} | text_len={len(text)}")
 
     # ── validate and save upload ──────────────────────────────────────────────
+    if reference_audio.content_type not in _ALLOWED_MIME:
+        raise HTTPException(status_code=400, detail=f"Invalid MIME type: {reference_audio.content_type}")
+
     raw_bytes = await reference_audio.read()
+    if len(raw_bytes) > _MAX_BYTES:
+        raise HTTPException(status_code=400, detail="File too large (max 10MB)")
     
     # ── trim reference audio ──────────────────────────────────────────────────
     # Long reference audio degrades quality. Trimming to 10s as recommended.
     logger.info("[CLONE] Trimming reference audio to optimal 10s window...")
-    raw_bytes = trim_audio_to_limit(raw_bytes, limit_seconds=10.0)
-
-    if len(raw_bytes) > _MAX_BYTES:
-        raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+    try:
+        raw_bytes = trim_audio_to_limit(raw_bytes, limit_seconds=10.0)
+    except Exception as e:
+        logger.warning(f"[CLONE] Trimming failed: {e}. Using raw audio.")
 
     suffix = os.path.splitext(reference_audio.filename)[1] or ".audio"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -72,11 +78,24 @@ async def clone_voice(
             ref_text = ""
 
         # ── Step 2: Inference with Transcription ──────────────────────────────
-        logger.info(f"[CLONE] Synthesizing text: '{text[:50]}...'")
+        # Process metadata hints if provided
+        tag_prefix = ""
+        if metadata:
+            try:
+                import json
+                meta = json.loads(metadata)
+                tags = []
+                for k, v in meta.items():
+                    if v: tags.append(f"[{k}:{v}]")
+                tag_prefix = "".join(tags)
+            except: pass
+
+        prompt_text = f"{tag_prefix} {text}".strip()
+        logger.info(f"[CLONE] Synthesizing text: '{prompt_text[:50]}...'")
         
         # Note: ref_text is passed as the prompt for the zero-shot encoder
         result = model.generate(
-            text=text,
+            text=prompt_text,
             ref_audio=tmp_path,
             ref_text=ref_text,
         )
