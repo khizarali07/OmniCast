@@ -47,12 +47,11 @@ export default function ChatPage() {
       .then((data) => {
         if (!active) return;
         const items = Array.isArray(data) ? data : [];
-        const cloned = items.filter((voice) => voice.type === "cloned");
-        setVoices(cloned);
-        if (requestedVoiceId && cloned.some((voice) => voice.id === requestedVoiceId)) {
+        setVoices(items);
+        if (requestedVoiceId && items.some((voice) => voice.id === requestedVoiceId)) {
           setSelectedVoiceId(requestedVoiceId);
-        } else if (cloned.length > 0) {
-          setSelectedVoiceId(cloned[0].id);
+        } else if (items.length > 0) {
+          setSelectedVoiceId(items[0].id);
         }
         setError(null);
       })
@@ -167,11 +166,11 @@ export default function ChatPage() {
               {loadingVoices ? (
                 <option>Loading voices...</option>
               ) : voices.length === 0 ? (
-                <option>No cloned voices found</option>
+                <option>No voices found</option>
               ) : (
                 voices.map((voice) => (
                   <option key={voice.id} value={voice.id}>
-                    {voice.name} {voice.type === "cloned" ? "(Cloned)" : ""}
+                    {voice.name} {voice.type ? `(${voice.type})` : ""}
                   </option>
                 ))
               )}
@@ -235,7 +234,7 @@ export default function ChatPage() {
             ) : null}
             {!error && !loadingVoices && voices.length === 0 ? (
               <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 px-4 py-3 text-xs text-amber-100/80">
-                No cloned voices yet. Save a clone from the Clone Voice page.
+                No voices yet. Create one from the Design Voice or Clone Voice page.
               </div>
             ) : null}
           </div>

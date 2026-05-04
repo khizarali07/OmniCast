@@ -80,6 +80,83 @@ def _resolve_storage_path(record: dict, user_id: str, voice_id: str) -> str:
     return f"{user_id}/{voice_id}.wav"
 
 
+def _parse_metadata(record: dict) -> dict:
+    meta = record.get("metadata") or {}
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except Exception:
+            meta = {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def _sanitize_speed(value: object) -> float:
+    try:
+        speed = float(value)
+    except Exception:
+        return 1.0
+    return min(2.0, max(0.5, speed))
+
+
+def _build_instruct(meta: dict) -> str:
+    instruct_items: list[str] = []
+
+    gender = meta.get("gender")
+    if gender in ["male", "female"]:
+        instruct_items.append(gender)
+
+    age = meta.get("age")
+    if age:
+        instruct_items.append(age)
+
+    style = meta.get("style")
+    style_active = False
+    if style == "whisper":
+        instruct_items.append("whisper")
+        style_active = True
+    elif style == "energetic":
+        instruct_items.append("high pitch")
+        style_active = True
+    elif style == "soft":
+        instruct_items.append("low pitch")
+        style_active = True
+
+    accent = meta.get("accent")
+    if accent and "american" not in accent:
+        instruct_items.append(accent)
+    elif accent and not style_active:
+        instruct_items.append(accent)
+
+    pitch = meta.get("pitch")
+    if pitch and "moderate" not in pitch and not style_active:
+        instruct_items.append(pitch)
+
+    return ", ".join(instruct_items)
+
+
+def _get_voice_record(supabase, voice_id: str, user_id: str) -> dict:
+    try:
+        res = (
+            supabase.table("voices")
+            .select("id,user_id,metadata,type")
+            .eq("id", voice_id)
+            .eq("user_id", user_id)
+            .single()
+            .execute()
+        )
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Voice not found")
+        return res.data
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"[CALL] Supabase voice lookup failed: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Supabase voice lookup failed",
+        )
+
+
 def _get_call_or_404(supabase, call_id: str, user_id: str) -> dict:
     try:
         res = (
@@ -233,20 +310,20 @@ async def active_call(
 
     # Step C: LLM response with recent call context
     logger.info("[CALL] Generating assistant reply via Groq LLM...")
-    
+
     # FETCH HISTORY BEFORE THE CURRENT MESSAGE OR JUST FETCH ALL
     # To be safe, we fetch the last 50 and ensure our current message is included or appended.
     history = _fetch_recent_messages(supabase, call_id, limit=50)
-    
+
     system_prompt = (
         "You are a helpful, friendly, and concise voice assistant. "
         "CRITICAL: You MUST remember the user's name and any details they share with you. "
         "Refer to the conversation history to stay in context. "
         "Keep answers brief (1-3 sentences) for natural spoken dialogue."
     )
-    
+
     messages = [{"role": "system", "content": system_prompt}]
-    
+
     # Build history list
     for item in history:
         role = item.get("role")
@@ -262,7 +339,7 @@ async def active_call(
     completion = client.chat.completions.create(
         model="llama-3.1-8b-instant",
         messages=messages,
-        temperature=0.4, # Slightly higher temperature for more natural flow
+        temperature=0.4,  # Slightly higher temperature for more natural flow
     )
     reply_text = completion.choices[0].message.content.strip()
 
@@ -274,32 +351,65 @@ async def active_call(
 
     # Step E: TTS (OmniVoice) with strict VRAM cleanup
     model = get_model()
-    embedding = _load_voice_embedding(supabase, voice_id, user["user_id"])
+    voice_record = _get_voice_record(supabase, voice_id, user["user_id"])
+    metadata = _parse_metadata(voice_record)
+    voice_type = voice_record.get("type")
 
-    _hard_clear_cache()
-    audio_array = generate_with_voice_embedding(
-        model,
-        reply_text,
-        embedding,
-        speed=1.0,
-        language="English",
-    )
-    _hard_clear_cache()
+    if voice_type == "cloned":
+        embedding = _load_voice_embedding(supabase, voice_id, user["user_id"])
 
-    if isinstance(audio_array, torch.Tensor):
-        waveform = audio_array.float()
+        _hard_clear_cache()
+        audio_array = generate_with_voice_embedding(
+            model,
+            reply_text,
+            embedding,
+            speed=1.0,
+            language="English",
+        )
+        _hard_clear_cache()
+
+        if isinstance(audio_array, torch.Tensor):
+            waveform = audio_array.float()
+        else:
+            waveform = torch.from_numpy(audio_array).float()
+        if waveform.ndim == 1:
+            waveform = waveform.unsqueeze(0)
     else:
-        waveform = torch.from_numpy(audio_array).float()
-    if waveform.ndim == 1:
-        waveform = waveform.unsqueeze(0)
+        instruct = _build_instruct(metadata)
+        speed = _sanitize_speed(metadata.get("speed", 1.0))
+
+        _hard_clear_cache()
+        audio_list = model.generate(
+            text=reply_text,
+            language="English",
+            instruct=instruct if instruct else None,
+            speed=speed,
+            postprocess_output=False,
+        )
+        _hard_clear_cache()
+
+        if not audio_list:
+            raise HTTPException(
+                status_code=500, detail="Model returned empty audio list"
+            )
+
+        waveform = torch.from_numpy(audio_list[0]).float()
+        if waveform.ndim == 1:
+            waveform = waveform.unsqueeze(0)
 
     wav_bytes = tensor_to_wav_bytes(waveform, 24000)
-    
+
     # Prepare headers with base64 encoded transcripts for the frontend
     headers = {
-        "X-User-Transcript": base64.b64encode(transcript_text.encode("utf-8")).decode("utf-8"),
-        "X-Assistant-Reply": base64.b64encode(reply_text.encode("utf-8")).decode("utf-8"),
-        "Access-Control-Expose-Headers": "X-User-Transcript, X-Assistant-Reply"
+        "X-User-Transcript": base64.b64encode(transcript_text.encode("utf-8")).decode(
+            "utf-8"
+        ),
+        "X-Assistant-Reply": base64.b64encode(reply_text.encode("utf-8")).decode(
+            "utf-8"
+        ),
+        "Access-Control-Expose-Headers": "X-User-Transcript, X-Assistant-Reply",
     }
-    
-    return StreamingResponse(io.BytesIO(wav_bytes), media_type="audio/wav", headers=headers)
+
+    return StreamingResponse(
+        io.BytesIO(wav_bytes), media_type="audio/wav", headers=headers
+    )

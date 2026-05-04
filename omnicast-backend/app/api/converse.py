@@ -72,6 +72,83 @@ def _resolve_storage_path(record: dict, user_id: str, voice_id: str) -> str:
     return f"{user_id}/{voice_id}.wav"
 
 
+def _parse_metadata(record: dict) -> dict:
+    meta = record.get("metadata") or {}
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except Exception:
+            meta = {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def _sanitize_speed(value: object) -> float:
+    try:
+        speed = float(value)
+    except Exception:
+        return 1.0
+    return min(2.0, max(0.5, speed))
+
+
+def _build_instruct(meta: dict) -> str:
+    instruct_items: list[str] = []
+
+    gender = meta.get("gender")
+    if gender in ["male", "female"]:
+        instruct_items.append(gender)
+
+    age = meta.get("age")
+    if age:
+        instruct_items.append(age)
+
+    style = meta.get("style")
+    style_active = False
+    if style == "whisper":
+        instruct_items.append("whisper")
+        style_active = True
+    elif style == "energetic":
+        instruct_items.append("high pitch")
+        style_active = True
+    elif style == "soft":
+        instruct_items.append("low pitch")
+        style_active = True
+
+    accent = meta.get("accent")
+    if accent and "american" not in accent:
+        instruct_items.append(accent)
+    elif accent and not style_active:
+        instruct_items.append(accent)
+
+    pitch = meta.get("pitch")
+    if pitch and "moderate" not in pitch and not style_active:
+        instruct_items.append(pitch)
+
+    return ", ".join(instruct_items)
+
+
+def _get_voice_record(supabase, voice_id: str, user_id: str) -> dict:
+    try:
+        res = (
+            supabase.table("voices")
+            .select("id,user_id,metadata,type")
+            .eq("id", voice_id)
+            .eq("user_id", user_id)
+            .single()
+            .execute()
+        )
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Voice not found")
+        return res.data
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"[CONVERSE] Supabase voice lookup failed: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Supabase voice lookup failed",
+        )
+
+
 @router.post("")
 async def converse(
     voice_id: str = Form(...),
@@ -129,65 +206,90 @@ async def converse(
     if not reply_text:
         raise HTTPException(status_code=500, detail="LLM returned empty response")
 
-    # Step C: Stable TTS using cached speaker embedding
+    # Step C: TTS (cloned or designed)
     model = get_model()
-    embedding = get_cached_speaker_embedding(voice_id)
+    supabase = _require_supabase()
+    voice_record = _get_voice_record(supabase, voice_id, user["user_id"])
+    metadata = _parse_metadata(voice_record)
+    voice_type = voice_record.get("type")
 
-    if embedding is None:
-        supabase = _require_supabase()
-        res = (
-            supabase.table("voices")
-            .select("id,user_id,metadata")
-            .eq("id", voice_id)
-            .eq("user_id", user["user_id"])
-            .execute()
-        )
-        if not res.data:
-            raise HTTPException(status_code=404, detail="Voice not found")
+    if voice_type == "cloned":
+        embedding = get_cached_speaker_embedding(voice_id)
 
-        record = res.data[0]
-        storage_path = _resolve_storage_path(record, user["user_id"], voice_id)
-
-        try:
-            ref_bytes = supabase.storage.from_(_BUCKET).download(storage_path)
-        except Exception as exc:
-            logger.error(f"[CONVERSE] Storage download failed: {exc}")
-            raise HTTPException(
-                status_code=500, detail="Failed to download reference audio"
+        if embedding is None:
+            storage_path = _resolve_storage_path(
+                voice_record, user["user_id"], voice_id
             )
 
-        tmp_path = load_audio_to_file(ref_bytes)
-        try:
-            embedding = extract_speaker_embedding(model, tmp_path)
-            cache_speaker_embedding(voice_id, embedding)
-        finally:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
+            try:
+                ref_bytes = supabase.storage.from_(_BUCKET).download(storage_path)
+            except Exception as exc:
+                logger.error(f"[CONVERSE] Storage download failed: {exc}")
+                raise HTTPException(
+                    status_code=500, detail="Failed to download reference audio"
+                )
 
-    clear_cache()
-    audio_array = generate_with_voice_embedding(
-        model,
-        reply_text,
-        embedding,
-        speed=1.0,
-        language="English",
-    )
-    clear_cache()
+            tmp_path = load_audio_to_file(ref_bytes)
+            try:
+                embedding = extract_speaker_embedding(model, tmp_path)
+                cache_speaker_embedding(voice_id, embedding)
+            finally:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
 
-    if isinstance(audio_array, torch.Tensor):
-        waveform = audio_array.float()
+        clear_cache()
+        audio_array = generate_with_voice_embedding(
+            model,
+            reply_text,
+            embedding,
+            speed=1.0,
+            language="English",
+        )
+        clear_cache()
+
+        if isinstance(audio_array, torch.Tensor):
+            waveform = audio_array.float()
+        else:
+            waveform = torch.from_numpy(audio_array).float()
+        if waveform.ndim == 1:
+            waveform = waveform.unsqueeze(0)
     else:
-        waveform = torch.from_numpy(audio_array).float()
-    if waveform.ndim == 1:
-        waveform = waveform.unsqueeze(0)
+        instruct = _build_instruct(metadata)
+        speed = _sanitize_speed(metadata.get("speed", 1.0))
+
+        clear_cache()
+        audio_list = model.generate(
+            text=reply_text,
+            language="English",
+            instruct=instruct if instruct else None,
+            speed=speed,
+            postprocess_output=False,
+        )
+        clear_cache()
+
+        if not audio_list:
+            raise HTTPException(
+                status_code=500, detail="Model returned empty audio list"
+            )
+
+        waveform = torch.from_numpy(audio_list[0]).float()
+        if waveform.ndim == 1:
+            waveform = waveform.unsqueeze(0)
 
     wav_bytes = tensor_to_wav_bytes(waveform, 24000)
-    
+
     import base64
+
     headers = {
-        "X-User-Transcript": base64.b64encode(transcript_text.encode("utf-8")).decode("utf-8"),
-        "X-Assistant-Reply": base64.b64encode(reply_text.encode("utf-8")).decode("utf-8"),
-        "Access-Control-Expose-Headers": "X-User-Transcript, X-Assistant-Reply"
+        "X-User-Transcript": base64.b64encode(transcript_text.encode("utf-8")).decode(
+            "utf-8"
+        ),
+        "X-Assistant-Reply": base64.b64encode(reply_text.encode("utf-8")).decode(
+            "utf-8"
+        ),
+        "Access-Control-Expose-Headers": "X-User-Transcript, X-Assistant-Reply",
     }
-    
-    return StreamingResponse(io.BytesIO(wav_bytes), media_type="audio/wav", headers=headers)
+
+    return StreamingResponse(
+        io.BytesIO(wav_bytes), media_type="audio/wav", headers=headers
+    )

@@ -146,21 +146,12 @@ export default function DashboardPage() {
               <p className="font-body-xs text-tertiary mb-6">Created {new Date(voice.created_at).toLocaleDateString()}</p>
 
               <div className="mt-auto flex items-center gap-3">
-                {voice.type === 'cloned' ? (
-                  <Link
-                    href={`/dashboard/chat?voice_id=${voice.id}`}
-                    className="flex-1 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-xs font-medium text-on-surface transition-all text-center"
-                  >
-                    Use Voice
-                  </Link>
-                ) : (
-                  <button
-                    className="flex-1 py-2 bg-white/5 rounded-lg text-xs font-medium text-on-surface/50 cursor-not-allowed"
-                    disabled
-                  >
-                    Use Voice
-                  </button>
-                )}
+                <Link
+                  href={`/dashboard/chat?voice_id=${voice.id}`}
+                  className="flex-1 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-xs font-medium text-on-surface transition-all text-center"
+                >
+                  Use Voice
+                </Link>
                 <button
                   type="button"
                   onClick={() => requestDelete(voice)}

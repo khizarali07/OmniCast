@@ -159,9 +159,11 @@ async def generate(
                     )
                 except Exception as exc:
                     # Defensive: catch any DB type errors (e.g., invalid uuid syntax)
-                    logger.warning(f"[TTS] Skipping voice lookup due to invalid voice_id: {body.voice_id} ({exc})")
+                    logger.warning(
+                        f"[TTS] Skipping voice lookup due to invalid voice_id: {body.voice_id} ({exc})"
+                    )
                     res = None
-                if not res or not getattr(res, 'data', None):
+                if not res or not getattr(res, "data", None):
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="Voice not found",

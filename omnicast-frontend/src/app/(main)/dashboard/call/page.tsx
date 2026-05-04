@@ -118,10 +118,9 @@ export default function CallPage() {
       .then((data) => {
         if (!active) return;
         const items = Array.isArray(data) ? data : [];
-        const cloned = items.filter((voice) => voice.type === 'cloned');
-        setVoices(cloned);
-        if (cloned.length > 0) {
-          setSelectedVoiceId(cloned[0].id);
+        setVoices(items);
+        if (items.length > 0) {
+          setSelectedVoiceId(items[0].id);
         }
       })
       .catch(() => {
@@ -222,7 +221,7 @@ export default function CallPage() {
   async function startCall() {
     if (call || startingCall) return;
     if (!selectedVoiceId) {
-      toast.error('Select a cloned voice first.');
+      toast.error('Select a voice first.');
       return;
     }
 
@@ -322,11 +321,11 @@ export default function CallPage() {
               {loadingVoices ? (
                 <option>Loading voices...</option>
               ) : voices.length === 0 ? (
-                <option>No cloned voices found</option>
+                <option>No voices found</option>
               ) : (
                 voices.map((voice) => (
                   <option key={voice.id} value={voice.id}>
-                    {voice.name}
+                    {voice.name} {voice.type ? `(${voice.type})` : ''}
                   </option>
                 ))
               )}
@@ -421,7 +420,7 @@ export default function CallPage() {
 
               {!loadingVoices && voices.length === 0 ? (
                 <div className="mt-6 rounded-2xl border border-amber-300/30 bg-amber-400/10 px-4 py-3 text-xs text-amber-100/80">
-                  No cloned voices yet. Save a clone from the Clone Voice page.
+                  No voices yet. Create one from the Design Voice or Clone Voice page.
                 </div>
               ) : null}
             </div>
