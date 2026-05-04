@@ -57,13 +57,36 @@ export default function CallPage() {
       try {
         const wavBuffer = vadUtils.encodeWAV(audio, 1, 16000, 1, 16);
         const wavBlob = new Blob([wavBuffer], { type: 'audio/wav' });
-        const response = await activeCall({
+        const { audioBlob, userTranscript, assistantReply } = await activeCall({
           call_id: call.id,
           voice_id: selectedVoiceId,
           audio: wavBlob,
         });
 
-        const url = blobToAudioUrl(response);
+        // Add to transcripts immediately for "Live" feel
+        if (userTranscript || assistantReply) {
+          const now = new Date().toISOString();
+          const newEntries: TranscriptRecord[] = [];
+          if (userTranscript) {
+            newEntries.push({
+              id: `temp-u-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              role: 'user',
+              message: userTranscript,
+              created_at: now,
+            });
+          }
+          if (assistantReply) {
+            newEntries.push({
+              id: `temp-a-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              role: 'assistant',
+              message: assistantReply,
+              created_at: now,
+            });
+          }
+          setTranscripts((prev) => [...prev, ...newEntries]);
+        }
+
+        const url = blobToAudioUrl(audioBlob);
         if (audioRef.current) {
           audioRef.current.pause();
         }
@@ -142,31 +165,50 @@ export default function CallPage() {
     let canceled = false;
     let intervalId: number | undefined;
 
-    const fetchTranscripts = async () => {
-      if (!transcripts.length) {
+    const fetchTranscripts = async (isFirst = false) => {
+      if (isFirst) {
         setLoadingTranscripts(true);
       }
       try {
         const res = await fetch(`/api/calls/${call.id}/transcripts`);
-        if (!res.ok) {
-          throw new Error('Failed to load transcripts');
-        }
+        if (!res.ok) throw new Error('Failed to load transcripts');
         const data = (await res.json()) as TranscriptRecord[];
         if (!canceled) {
-          setTranscripts(Array.isArray(data) ? data : []);
+          setTranscripts((prev) => {
+            const incoming = Array.isArray(data) ? data : [];
+            if (incoming.length === 0) return prev;
+            
+            // Merge logic: 
+            // 1. Keep all items from DB (incoming).
+            // 2. Keep temp items from 'prev' that haven't been 'confirmed' by DB yet.
+            // A temp item is confirmed if its message/role exists in incoming.
+            const dbMessages = new Set(incoming.map(i => `${i.role}:${i.message}`));
+            const remainingTemps = prev.filter(p => p.id.startsWith('temp-') && !dbMessages.has(`${p.role}:${p.message}`));
+            
+            // Avoid redundant updates if nothing changed
+            const combined = [...incoming, ...remainingTemps].sort((a, b) => 
+              new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+            );
+            
+            // Simple optimization: only set state if count or last message changed
+            if (combined.length === prev.length && combined.length > 0 && 
+                combined[combined.length-1].message === prev[prev.length-1].message) {
+              return prev;
+            }
+
+            return combined;
+          });
         }
       } catch (error) {
-        if (!canceled) {
-          console.error(error);
-        }
+        if (!canceled) console.error(error);
       } finally {
-        if (!canceled) {
+        if (!canceled && isFirst) {
           setLoadingTranscripts(false);
         }
       }
     };
 
-    fetchTranscripts();
+    fetchTranscripts(true);
     intervalId = window.setInterval(fetchTranscripts, 2000);
 
     return () => {

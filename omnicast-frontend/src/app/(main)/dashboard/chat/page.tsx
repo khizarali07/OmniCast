@@ -98,11 +98,11 @@ export default function ChatPage() {
 
         setIsThinking(true);
         try {
-          const responseBlob = await converseVoice({
+          const { audioBlob } = await converseVoice({
             voice_id: selectedVoiceId,
             audio: blob,
           });
-          const url = blobToAudioUrl(responseBlob);
+          const url = blobToAudioUrl(audioBlob);
           if (audioRef.current) {
             audioRef.current.pause();
           }

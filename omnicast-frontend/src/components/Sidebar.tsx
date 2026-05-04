@@ -53,7 +53,7 @@ export default function Sidebar() {
 
       {/* Footer Actions */}
       <div className="flex flex-col space-y-2 pt-8 border-t border-white/10">
-        <Link className="flex items-center gap-3 px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all duration-200 font-inter text-sm font-medium tracking-wide" href="#">
+        <Link className={getLinkClass('/dashboard/settings')} href="/dashboard/settings">
           <span className="material-symbols-outlined text-xl">settings</span>
           Settings
         </Link>

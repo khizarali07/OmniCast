@@ -8,8 +8,10 @@
  * - Returns typed results or throws structured ApiError objects.
  */
 
-const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
+// Resolve the backend URL, prioritizing environment variables but falling back to local dev
+const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
+
+console.log("[OmniCast API] Backend target:", BACKEND_URL);
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -44,7 +46,10 @@ async function apiFetch(
   const headers = new Headers(init.headers ?? {});
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
-  const res = await fetch(`${BACKEND_URL}${path}`, { ...init, headers });
+  const url = `${BACKEND_URL}${path}`;
+  console.debug(`[OmniCast API] ${init.method ?? 'GET'} ${url}`);
+
+  const res = await fetch(url, { ...init, headers });
 
   if (!res.ok) {
     let detail = res.statusText;
@@ -158,6 +163,18 @@ export async function listVoices() {
 }
 
 /**
+ * Update a voice name.
+ */
+export async function updateVoice(voiceId: string, name: string) {
+  const res = await apiFetch(`/api/v1/voices/${voiceId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  return res.json();
+}
+
+/**
  * Delete a voice by id.
  */
 export async function deleteVoice(voiceId: string) {
@@ -167,14 +184,51 @@ export async function deleteVoice(voiceId: string) {
   return res.json();
 }
 
+// ── Profile ──────────────────────────────────────────────────────────────────
+
+export async function getProfile() {
+  const res = await apiFetch("/api/v1/profile", {
+    method: "GET",
+  });
+  return res.json();
+}
+
+export async function updateProfileName(fullName: string) {
+  const res = await apiFetch("/api/v1/profile/name", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ full_name: fullName }),
+  });
+  return res.json();
+}
+
+export async function uploadAvatar(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await apiFetch("/api/v1/profile/avatar", {
+    method: "POST",
+    body: form,
+  });
+  return res.json();
+}
+
+export async function changePassword(password: string) {
+  const res = await apiFetch("/api/v1/profile/password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ new_password: password }),
+  });
+  return res.json();
+}
+
 /**
  * Converse with the assistant (Groq ASR + LLM + OmniVoice).
- * @returns Blob of type audio/wav
+ * @returns Object with Blob and transcripts
  */
 export async function converseVoice(params: {
   voice_id: string;
   audio: Blob;
-}): Promise<Blob> {
+}): Promise<{ audioBlob: Blob; userTranscript?: string; assistantReply?: string }> {
   const form = new FormData();
   form.append("voice_id", params.voice_id);
   form.append("user_audio", params.audio, "user_audio.webm");
@@ -183,18 +237,27 @@ export async function converseVoice(params: {
     method: "POST",
     body: form,
   });
-  return res.blob();
+
+  const userTranscript = res.headers.get("X-User-Transcript");
+  const assistantReply = res.headers.get("X-Assistant-Reply");
+
+  const blob = await res.blob();
+  return {
+    audioBlob: blob,
+    userTranscript: userTranscript ? atob(userTranscript) : undefined,
+    assistantReply: assistantReply ? atob(assistantReply) : undefined,
+  };
 }
 
 /**
  * Active call pipeline (VAD chunks -> ASR + LLM + TTS).
- * @returns Blob of type audio/wav
+ * @returns Object with Blob and transcripts
  */
 export async function activeCall(params: {
   call_id: string;
   voice_id: string;
   audio: Blob;
-}): Promise<Blob> {
+}): Promise<{ audioBlob: Blob; userTranscript?: string; assistantReply?: string }> {
   const form = new FormData();
   form.append("call_id", params.call_id);
   form.append("voice_id", params.voice_id);
@@ -204,7 +267,16 @@ export async function activeCall(params: {
     method: "POST",
     body: form,
   });
-  return res.blob();
+
+  const userTranscript = res.headers.get("X-User-Transcript");
+  const assistantReply = res.headers.get("X-Assistant-Reply");
+
+  const blob = await res.blob();
+  return {
+    audioBlob: blob,
+    userTranscript: userTranscript ? atob(userTranscript) : undefined,
+    assistantReply: assistantReply ? atob(assistantReply) : undefined,
+  };
 }
 
 /**

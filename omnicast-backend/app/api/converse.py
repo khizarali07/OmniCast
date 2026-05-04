@@ -182,4 +182,12 @@ async def converse(
         waveform = waveform.unsqueeze(0)
 
     wav_bytes = tensor_to_wav_bytes(waveform, 24000)
-    return StreamingResponse(io.BytesIO(wav_bytes), media_type="audio/wav")
+    
+    import base64
+    headers = {
+        "X-User-Transcript": base64.b64encode(transcript_text.encode("utf-8")).decode("utf-8"),
+        "X-Assistant-Reply": base64.b64encode(reply_text.encode("utf-8")).decode("utf-8"),
+        "Access-Control-Expose-Headers": "X-User-Transcript, X-Assistant-Reply"
+    }
+    
+    return StreamingResponse(io.BytesIO(wav_bytes), media_type="audio/wav", headers=headers)

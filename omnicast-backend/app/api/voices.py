@@ -225,6 +225,42 @@ async def list_voices(
         )
 
 
+class UpdateVoiceRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+@router.patch("/{voice_id}")
+async def update_voice(
+    voice_id: str,
+    body: UpdateVoiceRequest,
+    user: dict = Depends(get_current_user),
+):
+    user_id = user["user_id"]
+    supabase = _require_supabase()
+
+    try:
+        res = (
+            supabase.table("voices")
+            .update({"name": body.name})
+            .eq("id", voice_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        if not res.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Voice not found or not owned by user"
+            )
+        return {"status": "success", "voice_id": voice_id, "new_name": body.name}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"[LIBRARY] Supabase update failed: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Supabase update failed",
+        )
+
+
 @router.delete("/{voice_id}")
 async def delete_voice(
     voice_id: str,

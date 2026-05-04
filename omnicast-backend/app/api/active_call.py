@@ -8,6 +8,7 @@ import gc
 import io
 import json
 import os
+import base64
 
 import torch
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -232,23 +233,36 @@ async def active_call(
 
     # Step C: LLM response with recent call context
     logger.info("[CALL] Generating assistant reply via Groq LLM...")
-    system_prompt = (
-        "You are a concise, helpful voice assistant. "
-        "Use the conversation history to remember names and prior details. "
-        "Keep answers brief (1-3 sentences) for spoken dialogue."
-    )
+    
+    # FETCH HISTORY BEFORE THE CURRENT MESSAGE OR JUST FETCH ALL
+    # To be safe, we fetch the last 50 and ensure our current message is included or appended.
     history = _fetch_recent_messages(supabase, call_id, limit=50)
+    
+    system_prompt = (
+        "You are a helpful, friendly, and concise voice assistant. "
+        "CRITICAL: You MUST remember the user's name and any details they share with you. "
+        "Refer to the conversation history to stay in context. "
+        "Keep answers brief (1-3 sentences) for natural spoken dialogue."
+    )
+    
     messages = [{"role": "system", "content": system_prompt}]
+    
+    # Build history list
     for item in history:
         role = item.get("role")
         content = item.get("message")
         if role in {"user", "assistant"} and content:
             messages.append({"role": role, "content": content})
 
+    # Ensure the CURRENT message is the last user message in the list
+    # (If Supabase was fast, it's already there; if not, we append it if it's missing)
+    if not messages or messages[-1].get("content") != transcript_text:
+        messages.append({"role": "user", "content": transcript_text})
+
     completion = client.chat.completions.create(
         model="llama-3.1-8b-instant",
         messages=messages,
-        temperature=0.2,
+        temperature=0.4, # Slightly higher temperature for more natural flow
     )
     reply_text = completion.choices[0].message.content.strip()
 
@@ -280,4 +294,12 @@ async def active_call(
         waveform = waveform.unsqueeze(0)
 
     wav_bytes = tensor_to_wav_bytes(waveform, 24000)
-    return StreamingResponse(io.BytesIO(wav_bytes), media_type="audio/wav")
+    
+    # Prepare headers with base64 encoded transcripts for the frontend
+    headers = {
+        "X-User-Transcript": base64.b64encode(transcript_text.encode("utf-8")).decode("utf-8"),
+        "X-Assistant-Reply": base64.b64encode(reply_text.encode("utf-8")).decode("utf-8"),
+        "Access-Control-Expose-Headers": "X-User-Transcript, X-Assistant-Reply"
+    }
+    
+    return StreamingResponse(io.BytesIO(wav_bytes), media_type="audio/wav", headers=headers)

@@ -1,10 +1,35 @@
+'use client';
+
+import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
+import { useRouter, usePathname } from 'next/navigation';
+import { getProfile } from '@/utils/api';
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isActive = true;
+    async function loadProfile() {
+      try {
+        const data = await getProfile();
+        if (isActive) setAvatarUrl(data.avatar_url || null);
+      } catch {
+        if (isActive) setAvatarUrl(null);
+      }
+    }
+
+    loadProfile();
+    return () => {
+      isActive = false;
+    };
+  }, []);
   return (
     <>
       <Sidebar />
@@ -20,7 +45,22 @@ export default function DashboardLayout({
             <div className="w-full flex justify-end items-center">
               <div className="relative w-64 mr-6 group">
                 <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg group-hover:text-primary transition-colors">search</span>
-                <input className="w-full bg-surface-container-low/50 border border-surface-container-high rounded-full py-2 pl-10 pr-4 text-sm text-on-surface focus:outline-none focus:border-primary-container focus:ring-1 focus:ring-primary-container/50 transition-all placeholder:text-slate-500 backdrop-blur-md" placeholder="Search voices..." type="text"/>
+                <input 
+                  className="w-full bg-surface-container-low/50 border border-surface-container-high rounded-full py-2 pl-10 pr-4 text-sm text-on-surface focus:outline-none focus:border-primary-container focus:ring-1 focus:ring-primary-container/50 transition-all placeholder:text-slate-500 backdrop-blur-md" 
+                  placeholder="Search voices..." 
+                  type="text"
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const params = new URLSearchParams(window.location.search);
+                    if (val) {
+                      params.set('q', val);
+                    } else {
+                      params.delete('q');
+                    }
+                    // Use router.replace for idiomatic Next.js navigation
+                    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+                  }}
+                />
               </div>
             </div>
           </div>
@@ -30,7 +70,16 @@ export default function DashboardLayout({
               <span className="material-symbols-outlined">notifications</span>
             </button>
             <button className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-white/5 text-[#9D50BB] hover:text-white transition-colors active:opacity-80 border border-primary-container/30 overflow-hidden">
-              <span className="material-symbols-outlined">account_circle</span>
+              {avatarUrl ? (
+                <img
+                  src={avatarUrl}
+                  alt="Profile"
+                  className="w-full h-full object-cover"
+                  onError={() => setAvatarUrl(null)}
+                />
+              ) : (
+                <span className="material-symbols-outlined">account_circle</span>
+              )}
             </button>
           </div>
         </header>
