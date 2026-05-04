@@ -54,46 +54,56 @@ async def generate(
 
     try:
         # ── Step 1: Voice Design Mapping (OmniVoice 2604.00688 Protocol) ──────
-        # Global attributes go into the 'instruct' parameter as comma-separated keywords.
+        # Global attributes go into the 'instruct' parameter. 
+        # Research shows that 2-3 high-quality keywords are more stable than long lists.
         instruct_items = []
         
         if body.metadata:
-            # 1. Gender Mapping
+            # 1. Gender (Highest priority)
             gender = body.metadata.get("gender")
-            if gender == "female": instruct_items.append("female")
-            elif gender == "male": instruct_items.append("male")
+            if gender in ["male", "female"]:
+                instruct_items.append(gender)
             
-            # 2. Age Mapping
+            # 2. Age
             age = body.metadata.get("age")
-            if age: instruct_items.append(age) # Matches child, teenager, young adult, etc.
+            if age: instruct_items.append(age)
             
-            # 3. Pitch Mapping (New)
-            pitch = body.metadata.get("pitch")
-            if pitch: instruct_items.append(pitch)
-            
-            # 4. Accent Mapping (New)
-            accent = body.metadata.get("accent")
-            if accent: instruct_items.append(accent)
-            
-            # 5. Vocal Style (Hints for 'instruct')
+            # 3. Vocal Style Hint (Highest priority after demographic)
             style = body.metadata.get("style")
-            if style == "whisper": instruct_items.append("whisper")
-            elif style == "energetic": instruct_items.append("high pitch, fast")
-            elif style == "soft":      instruct_items.append("low pitch, slow")
+            style_active = False
+            if style == "whisper": 
+                instruct_items.append("whisper")
+                style_active = True
+            elif style == "energetic":
+                instruct_items.append("high pitch")
+                style_active = True
+            elif style == "soft":
+                instruct_items.append("low pitch")
+                style_active = True
 
-        # 6. Speed (from slider)
-        if body.speed < 0.8: instruct_items.append("very slow")
-        elif body.speed < 0.95: instruct_items.append("slow")
-        elif body.speed > 1.2: instruct_items.append("fast")
-        elif body.speed > 1.5: instruct_items.append("very fast")
+            # 4. Accent (Only if NOT american, or if no complex style is active)
+            accent = body.metadata.get("accent")
+            if accent and "american" not in accent:
+                instruct_items.append(accent)
+            elif accent and not style_active:
+                instruct_items.append(accent)
+
+            # 5. Pitch (Only if not already handled by style)
+            pitch = body.metadata.get("pitch")
+            if pitch and "moderate" not in pitch and not style_active:
+                instruct_items.append(pitch)
 
         instruct_str = ", ".join(instruct_items)
-        logger.info(f"[TTS] Instruct: '{instruct_str}' | Text: '{body.text[:50]}...'")
+        logger.info(f"[TTS] Instruct: '{instruct_str}' | Speed: {body.speed}")
 
         # ── Step 2: Inference ────────────────────────────────────────────────
+        # Explicitly passing language='English' helps stabilize the embeddings.
         audio_list = model.generate(
             text=body.text,
+            language="English",
             instruct=instruct_str if instruct_str else None,
+            speed=body.speed,
+            postprocess_output=False, 
         )
         
         if not audio_list:
@@ -103,7 +113,9 @@ async def generate(
         waveform = torch.from_numpy(audio_list[0]).unsqueeze(0)
         sample_rate = 24000
         
-        logger.info(f"[TTS] Generated {waveform.shape[-1]} samples.")
+        # Debug audio stats
+        p_min, p_max = waveform.min().item(), waveform.max().item()
+        logger.info(f"[TTS] Waveform stats: min={p_min:.4f}, max={p_max:.4f}")
 
     except Exception as exc:
         logger.error(f"[TTS] Inference error: {exc}")

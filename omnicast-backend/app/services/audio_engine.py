@@ -52,6 +52,16 @@ def tensor_to_wav_bytes(
     waveform = waveform.detach().cpu().float()
     waveform = _to_mono(waveform)
     waveform = _resample(waveform, orig_sr=sample_rate)
+    
+    # ── Normalisation with Noise-Floor Safeguard ──────────────────────────
+    # If the model produces absolute silence or tiny numerical noise (e.g. < -40dB),
+    # we do NOT amplify it. This prevents the "loud static" effect.
+    peak = torch.abs(waveform).max().item()
+    if peak > 0.01:
+        waveform = waveform / peak * 0.7   # Normalize to -3dB
+    else:
+        logger.warning(f"[AUDIO] Peak too low ({peak:.6f}), preserving raw signal.")
+
     waveform = torch.clamp(waveform, -1.0, 1.0)
     
     data = waveform.t().numpy()
