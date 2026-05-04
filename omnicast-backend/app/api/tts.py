@@ -11,6 +11,7 @@ import torch
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
+import uuid
 
 from app.core.security import get_current_user
 from app.core.logger import get_logger
@@ -45,6 +46,15 @@ def _resolve_storage_path(record: dict, user_id: str, voice_id: str) -> str:
     if storage_path:
         return storage_path
     return f"{user_id}/{voice_id}.wav"
+
+
+def _is_uuid(val: str) -> bool:
+    """Return True if val is a valid UUID string."""
+    try:
+        uuid.UUID(str(val))
+        return True
+    except Exception:
+        return False
 
 
 # ── request schema ────────────────────────────────────────────────────────────
@@ -128,7 +138,8 @@ async def generate(
         logger.info(f"[TTS] Instruct: '{instruct_str}' | Speed: {body.speed}")
 
         # ── Step 2: Inference ────────────────────────────────────────────────
-        if body.voice_id:
+        # Only treat voice_id as a stored voice when it is a valid UUID
+        if body.voice_id and _is_uuid(body.voice_id):
             embedding = get_cached_speaker_embedding(body.voice_id)
             if embedding is None:
                 supabase = get_supabase()
@@ -138,14 +149,19 @@ async def generate(
                         detail="Supabase client not configured",
                     )
 
-                res = (
-                    supabase.table("voices")
-                    .select("id,user_id,metadata,type")
-                    .eq("id", body.voice_id)
-                    .eq("user_id", user["user_id"])
-                    .execute()
-                )
-                if not res.data:
+                try:
+                    res = (
+                        supabase.table("voices")
+                        .select("id,user_id,metadata,type")
+                        .eq("id", body.voice_id)
+                        .eq("user_id", user["user_id"])
+                        .execute()
+                    )
+                except Exception as exc:
+                    # Defensive: catch any DB type errors (e.g., invalid uuid syntax)
+                    logger.warning(f"[TTS] Skipping voice lookup due to invalid voice_id: {body.voice_id} ({exc})")
+                    res = None
+                if not res or not getattr(res, 'data', None):
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="Voice not found",
