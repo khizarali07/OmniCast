@@ -187,6 +187,27 @@ export async function converseVoice(params: {
 }
 
 /**
+ * Active call pipeline (VAD chunks -> ASR + LLM + TTS).
+ * @returns Blob of type audio/wav
+ */
+export async function activeCall(params: {
+  call_id: string;
+  voice_id: string;
+  audio: Blob;
+}): Promise<Blob> {
+  const form = new FormData();
+  form.append("call_id", params.call_id);
+  form.append("voice_id", params.voice_id);
+  form.append("user_audio", params.audio, "user_audio.wav");
+
+  const res = await apiFetch("/api/v1/active_call", {
+    method: "POST",
+    body: form,
+  });
+  return res.blob();
+}
+
+/**
  * Convenience: convert an audio Blob to an object URL for <audio> elements.
  * Remember to call URL.revokeObjectURL() when done.
  */

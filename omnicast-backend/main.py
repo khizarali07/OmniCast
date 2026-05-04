@@ -10,7 +10,7 @@ import torch
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import tts, clone, voices, converse
+from app.api import tts, clone, voices, converse, active_call
 from app.core.config import get_settings
 from app.core.logger import get_logger
 from app.services.model_manager import load_model
@@ -68,6 +68,7 @@ app.include_router(tts.router, prefix="/api/v1")
 app.include_router(clone.router, prefix="/api/v1")
 app.include_router(voices.router, prefix="/api/v1")
 app.include_router(converse.router, prefix="/api/v1")
+app.include_router(active_call.router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["Health"])

@@ -41,6 +41,14 @@ export default function Sidebar() {
           <span className="material-symbols-outlined text-xl">content_copy</span>
           Clone Voice
         </Link>
+        <Link className={getLinkClass('/dashboard/call')} href="/dashboard/call">
+          <span className="material-symbols-outlined text-xl">call</span>
+          Active Call
+        </Link>
+        <Link className={getLinkClass('/dashboard/logs')} href="/dashboard/logs">
+          <span className="material-symbols-outlined text-xl">history</span>
+          Call Logs
+        </Link>
       </div>
 
       {/* Footer Actions */}

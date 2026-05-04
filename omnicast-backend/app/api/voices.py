@@ -266,22 +266,16 @@ async def delete_voice(
         try:
             supabase.storage.from_(_BUCKET).remove([storage_path])
             storage_deleted = True
-            logger.info(
-                f"[LIBRARY] ✓ Reference audio removed: {storage_path}"
-            )
+            logger.info(f"[LIBRARY] ✓ Reference audio removed: {storage_path}")
         except Exception as exc:
             storage_deleted = False
-            logger.warning(
-                f"[LIBRARY] Failed to remove reference audio: {exc}"
-            )
+            logger.warning(f"[LIBRARY] Failed to remove reference audio: {exc}")
 
     try:
         supabase.table("voices").delete().eq("id", voice_id).eq(
             "user_id", user_id
         ).execute()
-        logger.info(
-            f"[LIBRARY] ✓ Voice deleted voice_id={voice_id} user_id={user_id}"
-        )
+        logger.info(f"[LIBRARY] ✓ Voice deleted voice_id={voice_id} user_id={user_id}")
     except Exception as exc:
         logger.error(f"[LIBRARY] Supabase delete failed: {exc}")
         raise HTTPException(
