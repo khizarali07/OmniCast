@@ -5,7 +5,8 @@ from app.core.config import get_settings
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
-_bearer = HTTPBearer()
+_bearer = HTTPBearer(auto_error=False)
+
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(_bearer),
@@ -14,21 +15,24 @@ async def get_current_user(
     FastAPI dependency that validates the custom JWT from the frontend.
     Returns the decoded payload (e.g. {'user_id': '...', 'email': '...'})
     """
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     token = credentials.credentials
     settings = get_settings()
 
     try:
         # Decode using the shared secret
-        payload = jwt.decode(
-            token, 
-            settings.jwt_secret, 
-            algorithms=["HS256"]
-        )
-        
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+
         # In our custom auth, 'user_id' is the primary identifier
         if "user_id" not in payload:
             raise ValueError("Invalid payload: missing user_id")
-            
+
         # Mock email if not present in JWT (to avoid breaking existing loggers)
         if "email" not in payload:
             payload["email"] = f"user_{payload['user_id'][:8]}"

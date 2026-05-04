@@ -126,6 +126,28 @@ export async function saveVoice(params: {
 }
 
 /**
+ * Save a cloned voice with its reference audio to Supabase.
+ */
+export async function saveClonedVoice(params: {
+  name: string;
+  referenceFile: File;
+  metadata?: any;
+}) {
+  const form = new FormData();
+  form.append("voice_name", params.name);
+  form.append("reference_audio", params.referenceFile);
+  if (params.metadata) {
+    form.append("metadata", JSON.stringify(params.metadata));
+  }
+
+  const res = await apiFetch("/api/v1/voices/clone", {
+    method: "POST",
+    body: form,
+  });
+  return res.json();
+}
+
+/**
  * List all saved voices in the library.
  */
 export async function listVoices() {
@@ -133,6 +155,35 @@ export async function listVoices() {
     method: "GET",
   });
   return res.json();
+}
+
+/**
+ * Delete a voice by id.
+ */
+export async function deleteVoice(voiceId: string) {
+  const res = await apiFetch(`/api/v1/voices/${voiceId}`, {
+    method: "DELETE",
+  });
+  return res.json();
+}
+
+/**
+ * Converse with the assistant (Groq ASR + LLM + OmniVoice).
+ * @returns Blob of type audio/wav
+ */
+export async function converseVoice(params: {
+  voice_id: string;
+  audio: Blob;
+}): Promise<Blob> {
+  const form = new FormData();
+  form.append("voice_id", params.voice_id);
+  form.append("user_audio", params.audio, "user_audio.webm");
+
+  const res = await apiFetch("/api/v1/converse", {
+    method: "POST",
+    body: form,
+  });
+  return res.blob();
 }
 
 /**

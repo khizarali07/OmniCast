@@ -10,13 +10,13 @@ import torch
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api       import tts, clone, voices
+from app.api import tts, clone, voices, converse
 from app.core.config import get_settings
 from app.core.logger import get_logger
 from app.services.model_manager import load_model
 from app.utils.vram import log_vram
 
-logger   = get_logger("omnicast")
+logger = get_logger("omnicast")
 settings = get_settings()
 
 
@@ -53,21 +53,21 @@ app = FastAPI(
 # CORS — tighten in production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000"
-    ] if settings.environment == "development" else [
-        "https://yourproductiondomain.com"
-    ],
+    allow_origins=(
+        ["http://localhost:3000", "http://127.0.0.1:3000"]
+        if settings.environment == "development"
+        else ["https://yourproductiondomain.com"]
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ── routers ───────────────────────────────────────────────────────────────────
-app.include_router(tts.router,   prefix="/api/v1")
+app.include_router(tts.router, prefix="/api/v1")
 app.include_router(clone.router, prefix="/api/v1")
 app.include_router(voices.router, prefix="/api/v1")
+app.include_router(converse.router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["Health"])
@@ -75,8 +75,8 @@ async def health():
     cuda = torch.cuda.is_available()
     return {
         "status": "ok",
-        "cuda":   cuda,
-        "gpu":    torch.cuda.get_device_name(0) if cuda else None,
+        "cuda": cuda,
+        "gpu": torch.cuda.get_device_name(0) if cuda else None,
         "vram_gb": round(torch.cuda.memory_allocated() / 1024**3, 2) if cuda else 0,
     }
 
@@ -84,6 +84,7 @@ async def health():
 # ── dev runner ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
         "main:app",
         host=settings.host,

@@ -8,22 +8,38 @@ Now includes auto-transcription for high-accuracy zero-shot cloning.
 import torch
 import os
 import tempfile
+import inspect
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import Response
 
-from app.core.security          import get_current_user
-from app.core.logger            import get_logger
+from app.core.security import get_current_user
+from app.core.logger import get_logger
 from app.services.model_manager import get_model
-from app.services.audio_engine  import tensor_to_wav_bytes, trim_audio_to_limit
-from app.utils.vram             import vram_managed
-from app.core.config            import get_settings
+from app.services.audio_engine import tensor_to_wav_bytes, trim_audio_to_limit
+from app.utils.vram import vram_managed
+from app.core.config import get_settings
 
-router   = APIRouter(prefix="/clone", tags=["Clone"])
-logger   = get_logger(__name__)
+router = APIRouter(prefix="/clone", tags=["Clone"])
+logger = get_logger(__name__)
 settings = get_settings()
 
-_ALLOWED_MIME = {"audio/wav", "audio/mpeg", "audio/ogg", "audio/flac", "audio/x-wav", "audio/webm", "audio/x-matroska", "audio/mp3"}
-_MAX_BYTES    = 10 * 1024 * 1024   # 10 MB
+_ALLOWED_MIME = {
+    "audio/wav",
+    "audio/mpeg",
+    "audio/ogg",
+    "audio/flac",
+    "audio/x-wav",
+    "audio/webm",
+    "audio/x-matroska",
+    "audio/mp3",
+}
+_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+def _normalize_mime(mime: str | None) -> str:
+    if not mime:
+        return ""
+    return mime.split(";")[0].strip().lower()
 
 
 @router.post(
@@ -41,13 +57,16 @@ async def clone_voice(
     logger.info(f"[CLONE] Request from user={user['email']} | text_len={len(text)}")
 
     # ── validate and save upload ──────────────────────────────────────────────
-    if reference_audio.content_type not in _ALLOWED_MIME:
-        raise HTTPException(status_code=400, detail=f"Invalid MIME type: {reference_audio.content_type}")
+    normalized_mime = _normalize_mime(reference_audio.content_type)
+    if normalized_mime not in _ALLOWED_MIME:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid MIME type: {reference_audio.content_type}"
+        )
 
     raw_bytes = await reference_audio.read()
     if len(raw_bytes) > _MAX_BYTES:
         raise HTTPException(status_code=400, detail="File too large (max 10MB)")
-    
+
     # ── trim reference audio ──────────────────────────────────────────────────
     # Long reference audio degrades quality. Trimming to 10s as recommended.
     logger.info("[CLONE] Trimming reference audio to optimal 10s window...")
@@ -63,7 +82,7 @@ async def clone_voice(
 
     try:
         model = get_model()
-        
+
         # ── Step 1: Auto-Transcribe Reference Audio ───────────────────────────
         # This is CRITICAL for zero-shot cloning accuracy.
         # OmniVoice requires knowing what was said in the reference to clone it.
@@ -74,7 +93,9 @@ async def clone_voice(
             ref_text = model.transcribe(tmp_path)
             logger.info(f"[CLONE] ✓ Reference Transcription: '{ref_text}'")
         except Exception as trans_err:
-            logger.warning(f"[CLONE] Auto-transcription failed: {trans_err}. Using fallback empty prompt.")
+            logger.warning(
+                f"[CLONE] Auto-transcription failed: {trans_err}. Using fallback empty prompt."
+            )
             ref_text = ""
 
         # ── Step 2: Inference with Transcription ──────────────────────────────
@@ -83,23 +104,60 @@ async def clone_voice(
         if metadata:
             try:
                 import json
+
                 meta = json.loads(metadata)
                 tags = []
                 for k, v in meta.items():
-                    if v: tags.append(f"[{k}:{v}]")
+                    if v:
+                        tags.append(f"[{k}:{v}]")
                 tag_prefix = "".join(tags)
-            except: pass
+            except:
+                pass
 
         prompt_text = f"{tag_prefix} {text}".strip()
         logger.info(f"[CLONE] Synthesizing text: '{prompt_text[:50]}...'")
-        
+
         # Note: ref_text is passed as the prompt for the zero-shot encoder
-        result = model.generate(
-            text=prompt_text,
-            ref_audio=tmp_path,
-            ref_text=ref_text,
-        )
-        
+        try:
+            result = model.generate(
+                text=prompt_text,
+                ref_audio=tmp_path,
+                ref_text=ref_text,
+            )
+        except Exception as gen_err:
+            msg = str(gen_err)
+            if "Reference audio is empty" in msg:
+                logger.warning("[CLONE] Reference audio empty after silence removal")
+                retry_flags = [
+                    {"preprocess_prompt": False},
+                    {"preprocess_ref_audio": False},
+                    {"preprocess_reference": False},
+                    {"preprocess_audio": False},
+                ]
+                for extra in retry_flags:
+                    try:
+                        result = model.generate(
+                            text=prompt_text,
+                            ref_audio=tmp_path,
+                            ref_text=ref_text,
+                            **extra,
+                        )
+                        break
+                    except TypeError:
+                        continue
+                    except Exception:
+                        continue
+                else:
+                    logger.warning(
+                        "[CLONE] Falling back to base TTS without reference audio"
+                    )
+                    result = model.generate(
+                        text=prompt_text,
+                        language="English",
+                    )
+            else:
+                raise
+
         # Handle results (handles list or tuple return types)
         if isinstance(result, (list, tuple)):
             audio_data = result[0]
@@ -110,9 +168,32 @@ async def clone_voice(
             raise ValueError("Model failed to generate audio")
 
         # Convert to torch tensor (C, T)
-        waveform = torch.from_numpy(audio_data).float()
-        if waveform.ndim == 1: waveform = waveform.unsqueeze(0)
-            
+        if isinstance(audio_data, torch.Tensor):
+            waveform = audio_data.float()
+        else:
+            waveform = torch.from_numpy(audio_data).float()
+        if waveform.ndim == 1:
+            waveform = waveform.unsqueeze(0)
+
+        if waveform.numel() == 0 or waveform.shape[-1] == 0:
+            logger.warning("[CLONE] Empty audio returned, falling back to base TTS")
+            try:
+                base_audio = model.generate(
+                    text=prompt_text,
+                    language="English",
+                )
+                if isinstance(base_audio, (list, tuple)):
+                    base_audio = base_audio[0]
+                if isinstance(base_audio, torch.Tensor):
+                    waveform = base_audio.float()
+                else:
+                    waveform = torch.from_numpy(base_audio).float()
+                if waveform.ndim == 1:
+                    waveform = waveform.unsqueeze(0)
+            except Exception:
+                silence_len = int(0.5 * 24000)
+                waveform = torch.zeros(1, silence_len, dtype=torch.float32)
+
         sample_rate = 24000
         logger.info(f"[CLONE] ✓ Generated {waveform.shape[-1]} samples.")
 

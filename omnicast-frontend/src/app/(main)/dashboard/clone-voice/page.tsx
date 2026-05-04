@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { cloneVoice, blobToAudioUrl, saveVoice } from '@/utils/api';
+import { cloneVoice, blobToAudioUrl, saveClonedVoice } from '@/utils/api';
 import { toast } from 'sonner';
 
 export default function CloneVoicePage() {
@@ -93,12 +93,16 @@ export default function CloneVoicePage() {
       toast.error("Please provide a voice name before saving.");
       return;
     }
+    if (!referenceFile) {
+      toast.error("Please upload or record a reference sample first.");
+      return;
+    }
     setIsSaving(true);
     try {
-      await saveVoice({
+      await saveClonedVoice({
         name: voiceName,
-        voice_type: 'cloned',
-        metadata: { text, speed }
+        referenceFile,
+        metadata: { text, speed },
       });
       toast.success(`Voice "${voiceName}" saved to your library!`);
     } catch (error: any) {

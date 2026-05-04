@@ -14,17 +14,20 @@ settings = get_settings()
 
 _client: Client = None
 
+
 def get_supabase() -> Client:
     """Singleton getter for Supabase client."""
     global _client
     if _client is not None:
         return _client
 
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    url = settings.supabase_url
+    key = settings.supabase_service_role_key
 
-    if not url or not key or "your-" in url or "sb_secret" in key:
-        logger.warning("[SUPABASE] Missing or invalid credentials — falling back to local simulation.")
+    if not url or not key or "your-" in url:
+        logger.warning(
+            "[SUPABASE] Missing or invalid credentials — Supabase client not initialized."
+        )
         return None
 
     try:

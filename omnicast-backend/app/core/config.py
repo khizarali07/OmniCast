@@ -6,7 +6,7 @@ from pathlib import Path
 
 class Settings(BaseSettings):
     model_config = ConfigDict(
-        env_file=".env",
+        env_file=Path(__file__).resolve().parents[2] / ".env",
         env_file_encoding="utf-8",
         protected_namespaces=("settings_",),
         extra="ignore",
@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     supabase_anon_key: str
     supabase_service_role_key: str
     jwt_secret: str
+
+    # Groq
+    groq_api_key: str
 
     # Model
     weights_dir: Path = Path("./models")
