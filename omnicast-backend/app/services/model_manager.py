@@ -1,19 +1,19 @@
 """
 model_manager.py
 ----------------
-Handles downloading and lazy-loading the OmniVoice model weights.
+Handles downloading, lazy-loading, and VRAM hot-swapping for multiple models.
 
 Architecture decisions:
-  - float16 on CUDA  →  halves VRAM footprint (~4 GB instead of ~8 GB)
-  - Singleton pattern  →  model is loaded once at startup and reused
-  - IdleGuard monitors idle time and offloads to CPU automatically
+  - float16 on CUDA  →  halves VRAM footprint
+  - Multi-model Registry → Support for OmniVoice and MuseTalk
+  - VRAM Hot-Swapping → Moves models to CPU when inactive to free GPU space.
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 
 import torch
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
@@ -24,126 +24,123 @@ from app.utils.vram import IdleGuard, clear_cache, log_vram
 logger   = get_logger(__name__)
 settings = get_settings()
 
-# ── module-level singletons ──────────────────────────────────────────────────
-_model:      Optional[object]    = None
-_idle_guard: Optional[IdleGuard] = None
-
-
-def _get_model_ref():
-    """Closure used by IdleGuard to always get the current model object."""
-    return _model
+# ── Registry for loaded models ───────────────────────────────────────────────
+_REGISTRY: Dict[str, Any] = {
+    "omnivoice": None,
+    "musetalk": None
+}
+_IDLE_GUARDS: Dict[str, IdleGuard] = {}
 
 
 # ── weight downloader ────────────────────────────────────────────────────────
-def _ensure_weights_exist(model_dir: Path) -> None:
-    """
-    Check whether model weights are present in *model_dir*.
-    If not, attempt to download them from HuggingFace.
-    """
+def _ensure_omnivoice_weights(model_dir: Path) -> None:
     model_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Check for a specific file that indicates the model is downloaded
     indicator_file = model_dir / ".download_complete"
     
     if indicator_file.exists():
-        logger.info(f"[MODEL] Weights verified in {model_dir}")
         return
 
-    logger.warning("[MODEL] Weights not found — downloading from k2-fsa/OmniVoice...")
+    logger.warning("[MODEL] OmniVoice weights not found — downloading...")
     try:
         from huggingface_hub import snapshot_download
-        # 1. Download main OmniVoice weights
         snapshot_download(
             repo_id="k2-fsa/OmniVoice",
             local_dir=model_dir,
             local_dir_use_symlinks=False
         )
-        
-        # 2. Pre-download Whisper model used for alignment/cloning
-        # This prevents the "stuck" feeling during first inference
-        logger.info("[MODEL] Pre-downloading Whisper large-v3-turbo (1.6GB) for cloning...")
-        snapshot_download(
-            repo_id="openai/whisper-large-v3-turbo",
-            local_dir_use_symlinks=False
-        )
-        
-        # Create indicator file
         indicator_file.touch()
-        logger.info("[MODEL] ✓ All weights and dependencies ready.")
+        logger.info("[MODEL] ✓ OmniVoice weights ready.")
     except Exception as exc:
         logger.error(f"[MODEL] Download failed: {exc}")
         raise
 
 
-# ── model initializer ────────────────────────────────────────────────────────
-def load_model():
-    """
-    Load OmniVoice with float16 on CUDA (RTX 3070 optimised).
-    Falls back to CPU if no GPU is detected.
+# ── Model Loaders ───────────────────────────────────────────────────────────
+def load_omnivoice():
+    global _REGISTRY
+    if _REGISTRY["omnivoice"] is not None:
+        return _REGISTRY["omnivoice"]
 
-    Returns the loaded model object.
-    """
-    global _model, _idle_guard
-
-    if _model is not None:
-        logger.debug("[MODEL] Already loaded — returning cached instance.")
-        return _model
-
-    model_dir = settings.weights_dir
-    _ensure_weights_exist(model_dir)
+    model_dir = settings.weights_dir / "omnivoice"
+    _ensure_omnivoice_weights(model_dir)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype  = torch.float16 if device == "cuda" else torch.float32
 
-    logger.info(f"[MODEL] Loading OmniVoice on device={device}, dtype={dtype} …")
-    log_vram("BEFORE LOAD")
-
+    logger.info(f"[MODEL] Loading OmniVoice on {device}...")
     try:
         from omnivoice import OmniVoice
-        
-        # Load the model from the local weights directory
-        _model = OmniVoice.from_pretrained(
+        model = OmniVoice.from_pretrained(
             str(model_dir),
             device_map=device if device == "cuda" else None,
             torch_dtype=dtype
         )
-        
         if device == "cuda":
-            _model = _model.to(device)
-            
-        _model.eval()
+            model = model.to(device)
+        model.eval()
+        model.load_asr_model()
         
-        # Load the ASR model for auto-transcription during cloning
-        logger.info("[MODEL] Loading internal ASR engine...")
-        _model.load_asr_model()
+        _REGISTRY["omnivoice"] = model
         
-        logger.info("[MODEL] OmniVoice engine successfully initialized.")
-
+        # Start IdleGuard for OmniVoice
+        _IDLE_GUARDS["omnivoice"] = IdleGuard(get_model_fn=lambda: _REGISTRY["omnivoice"])
+        
+        return model
     except Exception as exc:
-        logger.error(f"[MODEL] Load failed: {exc}")
+        logger.error(f"[MODEL] OmniVoice load failed: {exc}")
         raise
 
-    log_vram("AFTER LOAD")
-    logger.info(f"[MODEL] ✓ OmniVoice ready on {device}.")
 
-    # Start the idle-offload watchdog
-    _idle_guard = IdleGuard(get_model_fn=_get_model_ref)
+def load_musetalk():
+    global _REGISTRY
+    if _REGISTRY["musetalk"] is not None:
+        return _REGISTRY["musetalk"]
 
-    return _model
+    logger.info("[MODEL] Initializing MuseTalk engine...")
+    try:
+        from app.services.musetalk_engine import MuseTalkEngine
+        engine = MuseTalkEngine()
+        # MuseTalk logic handles its own loading but we manage it here
+        engine.load()
+        _REGISTRY["musetalk"] = engine
+        
+        # IdleGuard for MuseTalk
+        _IDLE_GUARDS["musetalk"] = IdleGuard(get_model_fn=lambda: _REGISTRY["musetalk"])
+        
+        return engine
+    except Exception as exc:
+        logger.error(f"[MODEL] MuseTalk load failed: {exc}")
+        raise
 
 
-def get_model():
+# ── Dependency Helpers ──────────────────────────────────────────────────────
+def get_model(name: str = "omnivoice"):
     """
-    FastAPI dependency / service helper.
-    Ensures the model is on GPU before returning it.
+    Ensures the requested model is on GPU and touches its IdleGuard.
     """
-    global _model, _idle_guard
+    global _REGISTRY, _IDLE_GUARDS
 
-    if _model is None:
-        load_model()
+    if name == "omnivoice":
+        model = _REGISTRY["omnivoice"] or load_omnivoice()
+    elif name == "musetalk":
+        model = _REGISTRY["musetalk"] or load_musetalk()
+    else:
+        raise ValueError(f"Unknown model: {name}")
 
-    if _idle_guard is not None:
-        _idle_guard.reload_to_gpu(_model)
-        _idle_guard.touch()
+    # Hot-swap check: if it's an object with to(), move to GPU
+    # If it's a wrapper class (like MuseTalkEngine), it should handle internal move
+    if hasattr(model, "to") and torch.cuda.is_available():
+        device = next(model.parameters()).device if hasattr(model, "parameters") else None
+        if device and device.type != "cuda":
+            logger.info(f"[VRAM] Swapping {name} back to CUDA.")
+            model.to("cuda")
 
-    return _model
+    if name in _IDLE_GUARDS:
+        _IDLE_GUARDS[name].touch()
+
+    return model
+
+
+def get_musetalk():
+    return get_model("musetalk")
+

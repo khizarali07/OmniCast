@@ -21,6 +21,17 @@ import shutil
 from pathlib import Path
 from typing import Optional
 from tqdm import tqdm
+from einops import rearrange
+
+try:
+    import torchvision.transforms.functional_tensor as _ft  # noqa: F401
+except ModuleNotFoundError:
+    import types
+    import torchvision.transforms.functional as _F
+
+    _ft = types.ModuleType("torchvision.transforms.functional_tensor")
+    _ft.rgb_to_grayscale = _F.rgb_to_grayscale
+    sys.modules["torchvision.transforms.functional_tensor"] = _ft
 
 from app.core.logger import get_logger
 from app.core.config import get_settings
@@ -39,7 +50,6 @@ from musetalk.utils.preprocessing import (
     read_imgs,
     coord_placeholder,
 )
-from musetalk.utils.blending import get_image
 from musetalk.utils.audio_processor import AudioProcessor
 from musetalk.utils.face_parsing import FaceParsing
 
@@ -131,7 +141,168 @@ class MuseTalkEngine:
                 torch.cuda.empty_cache()
             logger.info("[MUSETALK] Offloaded to CPU.")
 
-    def inference(self, video_path: str, audio_path: str) -> str:
+    def _build_shifted_audio_prompts(
+        self,
+        whisper_input_features,
+        librosa_length,
+        fps,
+        sync_shift_frames,
+        weight_dtype,
+        device,
+        audio_padding_length_left=2,
+        audio_padding_length_right=2,
+    ):
+        sr = 16000
+        audio_fps = 50.0
+        fps = float(fps)
+
+        whisper_feature = []
+        for input_feature in whisper_input_features:
+            input_feature = input_feature.to(device=device, dtype=weight_dtype)
+            audio_feats = self.whisper.encoder(
+                input_feature, output_hidden_states=True
+            ).hidden_states
+            audio_feats = torch.stack(audio_feats, dim=2)
+            whisper_feature.append(audio_feats)
+
+        whisper_feature = torch.cat(whisper_feature, dim=1)
+        num_frames = math.floor((librosa_length / sr) * fps)
+        actual_length = math.floor((librosa_length / sr) * audio_fps)
+        whisper_feature = whisper_feature[:, :actual_length, ...]
+
+        audio_feature_length_per_frame = 2 * (
+            audio_padding_length_left + audio_padding_length_right + 1
+        )
+        padding_nums = math.ceil(audio_fps / fps)
+        left_pad = padding_nums * audio_padding_length_left
+        right_pad = padding_nums * audio_padding_length_right
+
+        if left_pad > 0 or right_pad > 0:
+            whisper_feature = torch.cat(
+                [
+                    torch.zeros(
+                        (
+                            whisper_feature.shape[0],
+                            left_pad,
+                            *whisper_feature.shape[2:],
+                        ),
+                        device=whisper_feature.device,
+                        dtype=whisper_feature.dtype,
+                    ),
+                    whisper_feature,
+                    torch.zeros(
+                        (
+                            whisper_feature.shape[0],
+                            right_pad,
+                            *whisper_feature.shape[2:],
+                        ),
+                        device=whisper_feature.device,
+                        dtype=whisper_feature.dtype,
+                    ),
+                ],
+                dim=1,
+            )
+
+        max_audio_start = max(
+            0,
+            int((num_frames - 1 + sync_shift_frames) * (audio_fps / fps)),
+        )
+        required_len = max_audio_start + audio_feature_length_per_frame
+        if required_len > whisper_feature.shape[1]:
+            pad = required_len - whisper_feature.shape[1]
+            whisper_feature = torch.cat(
+                [
+                    whisper_feature,
+                    torch.zeros(
+                        (
+                            whisper_feature.shape[0],
+                            pad,
+                            *whisper_feature.shape[2:],
+                        ),
+                        device=whisper_feature.device,
+                        dtype=whisper_feature.dtype,
+                    ),
+                ],
+                dim=1,
+            )
+
+        audio_prompts = []
+        for frame_idx in range(num_frames):
+            audio_start = max(
+                0,
+                int((frame_idx + sync_shift_frames) * (audio_fps / fps)),
+            )
+            audio_end = audio_start + audio_feature_length_per_frame
+            audio_clip = whisper_feature[:, audio_start:audio_end]
+            if audio_clip.shape[1] < audio_feature_length_per_frame:
+                pad = audio_feature_length_per_frame - audio_clip.shape[1]
+                audio_clip = torch.cat(
+                    [
+                        audio_clip,
+                        torch.zeros(
+                            (
+                                audio_clip.shape[0],
+                                pad,
+                                *audio_clip.shape[2:],
+                            ),
+                            device=audio_clip.device,
+                            dtype=audio_clip.dtype,
+                        ),
+                    ],
+                    dim=1,
+                )
+            audio_prompts.append(audio_clip)
+
+        audio_prompts = torch.cat(audio_prompts, dim=0)
+        audio_prompts = rearrange(audio_prompts, "b c h w -> b (c h) w")
+        return audio_prompts
+
+    def _feather_blend_lower_half(self, frame_bgr, generated_face_bgr_256, face_box):
+        x1, y1, x2, y2 = face_box
+        x1 = max(0, int(x1))
+        y1 = max(0, int(y1))
+        x2 = min(frame_bgr.shape[1], int(x2))
+        y2 = min(frame_bgr.shape[0], int(y2))
+        if x2 <= x1 or y2 <= y1:
+            return frame_bgr
+
+        orig_face_w = x2 - x1
+        orig_face_h = y2 - y1
+        lower_half_start = orig_face_h // 2
+        lower_half_h = orig_face_h - lower_half_start
+        if lower_half_h <= 0:
+            return frame_bgr
+
+        generated_mouth_256 = generated_face_bgr_256[generated_face_bgr_256.shape[0] // 2 :, :]
+        
+        resized_mouth = cv2.resize(generated_mouth_256, (orig_face_w, lower_half_h), interpolation=cv2.INTER_LANCZOS4)
+
+        gaussian_blur = cv2.GaussianBlur(resized_mouth, (0, 0), 2.0)
+        sharpened_mouth = cv2.addWeighted(resized_mouth, 1.5, gaussian_blur, -0.5, 0)
+
+        face_patch = frame_bgr[y1:y2, x1:x2].copy()
+        face_patch[lower_half_start:, :, :] = sharpened_mouth
+
+        mask = np.zeros((orig_face_h, orig_face_w), dtype=np.uint8)
+        mask[lower_half_start:, :] = 255
+        blur = max(5, int(min(orig_face_w, orig_face_h) * 0.08) | 1)
+        mask = cv2.GaussianBlur(mask, (blur, blur), 0)
+        alpha = mask.astype(np.float32) / 255.0
+
+        base_face = frame_bgr[y1:y2, x1:x2]
+        blended = (
+            alpha[..., None] * face_patch + (1.0 - alpha[..., None]) * base_face
+        ).astype(np.uint8)
+        frame_bgr[y1:y2, x1:x2] = blended
+        return frame_bgr
+
+    @torch.no_grad()
+    def inference(
+        self,
+        video_path: str,
+        audio_path: str,
+        sync_shift_frames: int = 0,
+    ) -> str:
         self.load()
         logger.info(
             f"[MUSETALK] Processing video: {video_path} and audio: {audio_path}"
@@ -150,6 +321,7 @@ class MuseTalkEngine:
         weight_dtype = self.unet.model.dtype
         device = self.device
 
+        save_dir_full = None
         try:
             # 1. Extract frames from video
             save_dir_full = os.path.join(temp_dir, "input_imgs")
@@ -171,13 +343,13 @@ class MuseTalkEngine:
                 )
             )
 
-            whisper_chunks = self.audio_processor.get_whisper_chunk(
+            whisper_chunks = self._build_shifted_audio_prompts(
                 whisper_input_features,
-                device,
-                weight_dtype,
-                self.whisper,
                 librosa_length,
-                fps=fps,
+                fps,
+                sync_shift_frames,
+                weight_dtype,
+                device,
                 audio_padding_length_left=2,
                 audio_padding_length_right=2,
             )
@@ -219,54 +391,48 @@ class MuseTalkEngine:
                 device=device,
             )
 
-            res_frame_list = []
+            frame_index = 0
             timesteps = torch.tensor([0], device=device)
 
             for i, (whisper_batch, latent_batch) in enumerate(gen):
-                with torch.no_grad():
-                    # Cast EVERYTHING to the same device + dtype before touching the UNet
-                    whisper_batch = whisper_batch.to(device=device, dtype=weight_dtype)
-                    latent_batch = latent_batch.to(device=device, dtype=weight_dtype)
+                # Cast EVERYTHING to the same device + dtype before touching the UNet
+                whisper_batch = whisper_batch.to(device=device, dtype=weight_dtype)
+                latent_batch = latent_batch.to(device=device, dtype=weight_dtype)
 
-                    audio_feature_batch = self.pe(whisper_batch)
-                    pred_latents = self.unet.model(
-                        latent_batch,
-                        timesteps,
-                        encoder_hidden_states=audio_feature_batch,
-                    ).sample
-                    recon = self.vae.decode_latents(pred_latents)
+                audio_feature_batch = self.pe(whisper_batch)
+                pred_latents = self.unet.model(
+                    latent_batch,
+                    timesteps,
+                    encoder_hidden_states=audio_feature_batch,
+                ).sample
+                recon = self.vae.decode_latents(pred_latents)
 
-                    for res_frame in recon:
-                        res_frame_list.append(res_frame)
-
-            # 6. FaceParsing Seamless Paste
-            logger.info("[MUSETALK] Padding generated images to original video size")
-            for i, res_frame in enumerate(res_frame_list):
-                bbox = coord_list_cycle[i % len(coord_list_cycle)]
-                ori_frame = copy.deepcopy(frame_list_cycle[i % len(frame_list_cycle)])
-                x1, y1, x2, y2 = bbox
-
-                y2 = y2 + self.extra_margin
-                y2 = min(y2, ori_frame.shape[0])
-
-                try:
-                    res_frame = cv2.resize(
-                        res_frame.astype(np.uint8), (x2 - x1, y2 - y1)
+                # 6. Face restoration + feather blend
+                for res_frame in recon:
+                    bbox = coord_list_cycle[frame_index % len(coord_list_cycle)]
+                    ori_frame = copy.deepcopy(
+                        frame_list_cycle[frame_index % len(frame_list_cycle)]
                     )
-                except:
-                    continue
+                    frame_index += 1
+                    if bbox == coord_placeholder:
+                        continue
 
-                # Combine using FaceParsing
-                combine_frame = get_image(
-                    ori_frame,
-                    res_frame,
-                    [x1, y1, x2, y2],
-                    mode=self.parsing_mode,
-                    fp=self.fp,
-                )
-                cv2.imwrite(
-                    f"{result_img_save_path}/{str(i).zfill(8)}.png", combine_frame
-                )
+                    x1, y1, x2, y2 = bbox
+                    y2 = y2 + self.extra_margin
+                    y2 = min(y2, ori_frame.shape[0])
+
+                    generated_face_bgr_256 = cv2.cvtColor(res_frame.astype(np.uint8), cv2.COLOR_RGB2BGR)
+
+                    combine_frame = self._feather_blend_lower_half(
+                        ori_frame, generated_face_bgr_256, [x1, y1, x2, y2]
+                    )
+                    cv2.imwrite(
+                        f"{result_img_save_path}/{str(frame_index - 1).zfill(8)}.png",
+                        combine_frame,
+                    )
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
             # 7. Convert images back to video
             cmd_img2video = [

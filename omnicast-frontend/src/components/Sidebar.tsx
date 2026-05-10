@@ -1,6 +1,7 @@
 'use client'
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { UserSquare } from 'lucide-react';
 import { logout } from '@/app/logout-action';
 
 export default function Sidebar() {
@@ -40,6 +41,14 @@ export default function Sidebar() {
         <Link className={getLinkClass('/dashboard/clone-voice')} href="/dashboard/clone-voice">
           <span className="material-symbols-outlined text-xl">content_copy</span>
           Clone Voice
+        </Link>
+        <Link className={getLinkClass('/avatars/create')} href="/avatars/create">
+          <UserSquare className="w-5 h-5" />
+          Create Avatar
+        </Link>
+        <Link className={getLinkClass('/meeting')} href="/meeting">
+          <span className="material-symbols-outlined text-xl">videocam</span>
+          Live Video Meeting
         </Link>
         <Link className={getLinkClass('/dashboard/call')} href="/dashboard/call">
           <span className="material-symbols-outlined text-xl">call</span>

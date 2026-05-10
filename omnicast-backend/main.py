@@ -10,10 +10,10 @@ import torch
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import tts, clone, voices, converse, active_call, profile
+from app.api import tts, clone, voices, converse, active_call, profile, video, avatars
 from app.core.config import get_settings
 from app.core.logger import get_logger
-from app.services.model_manager import load_model
+from app.services.model_manager import load_omnivoice, load_musetalk
 from app.utils.vram import log_vram
 
 logger = get_logger("omnicast")
@@ -30,8 +30,8 @@ async def lifespan(app: FastAPI):
         logger.info(f"  GPU            : {torch.cuda.get_device_name(0)}")
     logger.info("=" * 60)
 
-    # Pre-load model at startup so the first request is fast
-    load_model()
+    # Pre-load OmniVoice at startup
+    load_omnivoice()
     log_vram("STARTUP")
 
     yield  # ── server is running ─────────────────────────────────────────────
@@ -43,8 +43,8 @@ async def lifespan(app: FastAPI):
 # ── app factory ───────────────────────────────────────────────────────────────
 app = FastAPI(
     title="OmniCast API",
-    description="High-performance AI Voice synthesis & cloning backend.",
-    version="1.0.0",
+    description="High-performance AI Voice & Video synthesis backend.",
+    version="1.1.0",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
@@ -70,6 +70,8 @@ app.include_router(voices.router, prefix="/api/v1")
 app.include_router(converse.router, prefix="/api/v1")
 app.include_router(active_call.router, prefix="/api/v1")
 app.include_router(profile.router, prefix="/api/v1")
+app.include_router(video.router, prefix="/api/v1")
+app.include_router(avatars.router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["Health"])
@@ -92,5 +94,6 @@ if __name__ == "__main__":
         host=settings.host,
         port=settings.port,
         reload=settings.environment == "development",
+        reload_excludes=[".venv", "*.venv*", "models", "scratch"],
         log_level="info",
     )

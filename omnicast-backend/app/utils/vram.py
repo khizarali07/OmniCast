@@ -82,11 +82,16 @@ class IdleGuard:
         if model is None:
             return
         try:
+            # Support custom engine objects with unload() (e.g. MuseTalkEngine)
+            if hasattr(model, 'unload'):
+                model.unload()
+                clear_cache()
+                log_vram("AFTER OFFLOAD")
+                return
+            # Fallback for standard nn.Module objects
             device = next(model.parameters()).device
             if device.type == "cuda":
-                logger.warning(
-                    "[VRAM] Model idle — offloading to CPU to free VRAM."
-                )
+                logger.warning("[VRAM] Model idle — offloading to CPU to free VRAM.")
                 model.to("cpu")
                 clear_cache()
                 log_vram("AFTER OFFLOAD")
@@ -96,6 +101,11 @@ class IdleGuard:
     def reload_to_gpu(self, model) -> None:
         """Call this before inference to move the model back to CUDA."""
         try:
+            # Support custom engine objects with load() (e.g. MuseTalkEngine)
+            if hasattr(model, 'load'):
+                model.load()
+                log_vram("AFTER RELOAD")
+                return
             device = next(model.parameters()).device
             if device.type != "cuda" and torch.cuda.is_available():
                 logger.info("[VRAM] Reloading model to CUDA for inference.")
@@ -103,3 +113,4 @@ class IdleGuard:
                 log_vram("AFTER RELOAD")
         except StopIteration:
             pass
+

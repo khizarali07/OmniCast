@@ -10,6 +10,8 @@
 
 // Resolve the backend URL, prioritizing environment variables but falling back to local dev
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
+const TTS_ENGINE_URL = (process.env.NEXT_PUBLIC_TTS_ENGINE_URL || "http://127.0.0.1:18180").replace(/\/$/, "");
+const AVATAR_ENGINE_URL = (process.env.NEXT_PUBLIC_AVATAR_ENGINE_URL || "http://127.0.0.1:8383").replace(/\/$/, "");
 
 console.log("[OmniCast API] Backend target:", BACKEND_URL);
 
@@ -35,6 +37,21 @@ export class ApiError extends Error {
     super(`[${status}] ${detail}`);
     this.name = "ApiError";
   }
+}
+
+async function engineFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const res = await fetch(url, init);
+
+  if (!res.ok) {
+    let detail = res.statusText || "Request failed";
+    try {
+      const body = await res.clone().json();
+      detail = body.detail ?? body.message ?? detail;
+    } catch {}
+    throw new ApiError(res.status, detail);
+  }
+
+  return res;
 }
 
 async function apiFetch(
@@ -298,4 +315,106 @@ export async function checkHealth(): Promise<{
 }> {
   const res = await fetch(`${BACKEND_URL}/health`);
   return res.json();
+}
+
+// ── Avatar + Meeting Engines ───────────────────────────────────────────────
+
+export type AvatarSummary = {
+  id: string;
+  name: string;
+  reference_audio_url?: string | null;
+  video_url?: string | null;
+  output_video_url?: string | null;
+};
+
+export async function registerAvatar(params: {
+  name: string;
+  videoFile: File;
+  text: string;
+  voiceId: string;
+}): Promise<{
+  avatar_id: string;
+  avatar_name?: string;
+  video_url?: string | null;
+  reference_audio_url?: string | null;
+  output_video_url?: string | null;
+  preview_error?: string | null;
+}> {
+  const form = new FormData();
+  form.append("name", params.name);
+  form.append("video", params.videoFile);
+  form.append("text", params.text);
+  form.append("voice_id", params.voiceId);
+
+  const res = await apiFetch("/api/v1/avatars", {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.clone().json();
+      detail = body.error ?? body.detail ?? detail;
+    } catch {}
+    throw new ApiError(res.status, detail);
+  }
+  return res.json();
+}
+
+export async function listAvatars(): Promise<AvatarSummary[]> {
+  const res = await apiFetch("/api/v1/avatars", {
+    method: "GET",
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.clone().json();
+      detail = body.error ?? body.detail ?? detail;
+    } catch {}
+    throw new ApiError(res.status, detail);
+  }
+  return res.json();
+}
+
+/**
+ * Update an avatar name.
+ */
+export async function updateAvatar(avatarId: string, name: string) {
+  const res = await apiFetch(`/api/v1/avatars/${avatarId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  return res.json();
+}
+
+/**
+ * Delete an avatar by id.
+ */
+export async function deleteAvatar(avatarId: string) {
+  const res = await apiFetch(`/api/v1/avatars/${avatarId}`, {
+    method: "DELETE",
+  });
+  return res.json();
+}
+
+export async function generateAvatarVideo(params: {
+  avatarId: string;
+  text: string;
+  voiceId?: string;
+}): Promise<{ videoBlob: Blob }> {
+  const form = new FormData();
+  form.append("avatar_id", params.avatarId);
+  form.append("text", params.text);
+  if (params.voiceId) {
+    form.append("voice_id", params.voiceId);
+  }
+
+  const res = await apiFetch("/api/v1/video/generate-avatar", {
+    method: "POST",
+    body: form,
+  });
+
+  const videoBlob = await res.blob();
+  return { videoBlob };
 }
