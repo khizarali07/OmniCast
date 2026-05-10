@@ -257,45 +257,6 @@ class MuseTalkEngine:
         audio_prompts = rearrange(audio_prompts, "b c h w -> b (c h) w")
         return audio_prompts
 
-    def _feather_blend_lower_half(self, frame_bgr, generated_face_bgr_256, face_box):
-        x1, y1, x2, y2 = face_box
-        x1 = max(0, int(x1))
-        y1 = max(0, int(y1))
-        x2 = min(frame_bgr.shape[1], int(x2))
-        y2 = min(frame_bgr.shape[0], int(y2))
-        if x2 <= x1 or y2 <= y1:
-            return frame_bgr
-
-        orig_face_w = x2 - x1
-        orig_face_h = y2 - y1
-        lower_half_start = orig_face_h // 2
-        lower_half_h = orig_face_h - lower_half_start
-        if lower_half_h <= 0:
-            return frame_bgr
-
-        generated_mouth_256 = generated_face_bgr_256[generated_face_bgr_256.shape[0] // 2 :, :]
-        
-        resized_mouth = cv2.resize(generated_mouth_256, (orig_face_w, lower_half_h), interpolation=cv2.INTER_LANCZOS4)
-
-        gaussian_blur = cv2.GaussianBlur(resized_mouth, (0, 0), 2.0)
-        sharpened_mouth = cv2.addWeighted(resized_mouth, 1.5, gaussian_blur, -0.5, 0)
-
-        face_patch = frame_bgr[y1:y2, x1:x2].copy()
-        face_patch[lower_half_start:, :, :] = sharpened_mouth
-
-        mask = np.zeros((orig_face_h, orig_face_w), dtype=np.uint8)
-        mask[lower_half_start:, :] = 255
-        blur = max(5, int(min(orig_face_w, orig_face_h) * 0.08) | 1)
-        mask = cv2.GaussianBlur(mask, (blur, blur), 0)
-        alpha = mask.astype(np.float32) / 255.0
-
-        base_face = frame_bgr[y1:y2, x1:x2]
-        blended = (
-            alpha[..., None] * face_patch + (1.0 - alpha[..., None]) * base_face
-        ).astype(np.uint8)
-        frame_bgr[y1:y2, x1:x2] = blended
-        return frame_bgr
-
     @torch.no_grad()
     def inference(
         self,
@@ -407,28 +368,67 @@ class MuseTalkEngine:
                 ).sample
                 recon = self.vae.decode_latents(pred_latents)
 
-                # 6. Face restoration + feather blend
+                # 5. Seamless Paste, Color Fix, & Sharpening
                 for res_frame in recon:
                     bbox = coord_list_cycle[frame_index % len(coord_list_cycle)]
-                    ori_frame = copy.deepcopy(
+                    frame = copy.deepcopy(
                         frame_list_cycle[frame_index % len(frame_list_cycle)]
                     )
                     frame_index += 1
                     if bbox == coord_placeholder:
                         continue
 
-                    x1, y1, x2, y2 = bbox
-                    y2 = y2 + self.extra_margin
-                    y2 = min(y2, ori_frame.shape[0])
+                    xmin, ymin, xmax, ymax = bbox
+                    ymax = ymax + self.extra_margin
+                    ymax = min(ymax, frame.shape[0])
 
-                    generated_face_bgr_256 = cv2.cvtColor(res_frame.astype(np.uint8), cv2.COLOR_RGB2BGR)
+                    orig_face_w = xmax - xmin
+                    orig_face_h = ymax - ymin
+                    
+                    if orig_face_w <= 0 or orig_face_h <= 0:
+                        continue
 
-                    combine_frame = self._feather_blend_lower_half(
-                        ori_frame, generated_face_bgr_256, [x1, y1, x2, y2]
-                    )
+                    generated_face = res_frame.astype(np.uint8)
+
+                    # FIX: The model output is already BGR! Removing cvtColor to prevent turning the face blue.
+                    generated_face_bgr = generated_face
+                    generated_mouth_256 = generated_face_bgr[128:256, :]
+                    
+                    # Resize with Lanczos4 for mathematical sharpness
+                    lower_half_h = orig_face_h - (orig_face_h // 2)
+                    resized_mouth = cv2.resize(generated_mouth_256, (orig_face_w, lower_half_h), interpolation=cv2.INTER_LANCZOS4)
+                    
+                    # Unsharp Mask to crisp up the details
+                    gaussian_blur = cv2.GaussianBlur(resized_mouth, (0, 0), 2.0)
+                    sharpened_mouth = cv2.addWeighted(resized_mouth, 1.5, gaussian_blur, -0.5, 0)
+                    
+                    # Setup Coordinates
+                    y1 = ymin + (orig_face_h // 2)
+                    y2 = ymax
+                    x1 = xmin
+                    x2 = xmax
+                    
+                    original_crop = frame[y1:y2, x1:x2]
+                    
+                    # Create Feathered Mask for invisible edges
+                    mask = np.zeros((lower_half_h, orig_face_w, 3), dtype=np.float32)
+                    pad_x = int(orig_face_w * 0.15)
+                    pad_y = int(lower_half_h * 0.15)
+                    cv2.rectangle(mask, (pad_x, pad_y), (orig_face_w - pad_x, lower_half_h - pad_y), (255.0, 255.0, 255.0), -1)
+                    
+                    blur_size = max(21, int(orig_face_w * 0.2))
+                    if blur_size % 2 == 0: 
+                        blur_size += 1
+                    mask = cv2.GaussianBlur(mask, (blur_size, blur_size), 0)
+                    mask = mask / 255.0
+                    
+                    # Apply the blend using the SHARPENED mouth
+                    blended = (sharpened_mouth.astype(np.float32) * mask) + (original_crop.astype(np.float32) * (1.0 - mask))
+                    frame[y1:y2, x1:x2] = blended.astype(np.uint8)
+                    
                     cv2.imwrite(
                         f"{result_img_save_path}/{str(frame_index - 1).zfill(8)}.png",
-                        combine_frame,
+                        frame,
                     )
 
                 if torch.cuda.is_available():
